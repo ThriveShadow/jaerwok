@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Jaerwok Plantation Mapping</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+  <header class="app-header">
+    <div class="app-header-inner">
+      <img src="{{ url_for('static', filename='img/jaerwok.svg') }}" alt="Jaerwok logo" class="app-logo">
+      <div>
+        <h1>JAERWOK PLANTATION MAPPING SYSTEM</h1>
+        <p class="subheading">Made by Ridwan &amp; Jason for BINUS Thesis &mdash; AGRICULTURAL CROP MAPPING
+          AND ANOMALY DETECTION SYSTEM USING UAV (UNMANNED AERIAL VEHICLE) WITH INTEGRATED IMAGE STITCHING
+          AND MACHINE LEARNING</p>
+      </div>
+      <a href="{{ url_for('logout') }}" style="margin-left: auto; font-size: 0.8rem; color: var(--gray);">Log out</a>
+    </div>
+  </header>
+
+  <nav class="steps">
+    <div class="step active" data-step="1">
+      <span class="step-num">1</span>
+      <span class="step-label">Upload Images</span>
+    </div>
+    <div class="step" data-step="2">
+      <span class="step-num">2</span>
+      <span class="step-label">Orthomosaic (OpenSfM + ODM)</span>
+    </div>
+    <div class="step" data-step="3">
+      <span class="step-num">3</span>
+      <span class="step-label">NGRDI Vegetation Index</span>
+    </div>
+    <div class="step disabled" data-step="4">
+      <span class="step-num">4</span>
+      <span class="step-label">YOLOv8 Detection (coming next)</span>
+    </div>
+  </nav>
+
+  <main>
+    <!-- STEP 1 -->
+    <!-- STEP 1 -->
+<section id="panel-1" class="panel active">
+  <h2>1. Upload aerial images</h2>
+
+  <div class="panel-actions" style="margin-bottom: 16px;">
+    <button id="btn-new-project">+ New Project</button>
+  </div>
+
+  <div id="upload-section" class="hidden">
+    <p class="hint">Drop the raw JPG/PNG frames from your flight. Aim for 70&ndash;80% forward overlap and
+      60%+ side overlap between neighboring shots &mdash; that overlap is what OpenSfM needs to match
+      features and reconstruct camera positions.</p>
+
+    <div id="dropzone" class="dropzone">
+      <p>Drag &amp; drop images here, or click to browse</p>
+      <input type="file" id="file-input" multiple accept=".jpg,.jpeg,.png,.tif,.tiff" hidden>
+    </div>
+
+    <div class="upload-summary">
+      <span id="upload-count">0 images uploaded</span>
+      <button id="btn-upload" disabled>Upload selected files</button>
+    </div>
+
+    <div id="upload-progress-wrap" class="progress-wrap hidden">
+      <div class="progress-bar"><div id="upload-progress-fill" class="progress-fill"></div></div>
+      <div id="upload-progress-label" class="progress-label">0%</div>
+    </div>
+
+    <ul id="file-list" class="file-list"></ul>
+
+    <div class="panel-actions">
+      <button id="btn-to-step2" disabled>Continue to reconstruction &rarr;</button>
+    </div>
+  </div>
+
+  <hr style="margin: 32px 0; border: 0; border-top: 1px solid var(--border);" />
+
+  <div class="existing-projects" id="existing-projects">
+    <h3>Existing Projects</h3>
+    <div id="projects-grid" class="options-grid"></div>
+  </div>
+</section>
+
+    <!-- STEP 2 -->
+    <section id="panel-2" class="panel">
+      <h2>2. Reconstruct orthomosaic</h2>
+      <p class="hint">This runs OpenSfM (feature matching + sparse reconstruction) followed by dense
+        reconstruction and GDAL ortho-rectification (via ODM) to produce a georeferenced orthomosaic.
+        On a low CPU VM this can take a while &mdash; quality/resolution settings below trade
+        accuracy for RAM and time.</p>
+
+      <div class="options-grid">
+        <label>Compute
+          <select id="opt-compute">
+            <option value="local" selected>Local VM (Docker)</option>
+            <option value="runpod">RunPod (cloud, faster)</option>
+          </select>
+        </label>
+        <label>Quality
+          <select id="opt-quality">
+            <option value="low">Low (fastest, least RAM)</option>
+            <option value="medium" selected>Medium (recommended)</option>
+            <option value="high">High (slow, more RAM)</option>
+          </select>
+        </label>
+        <label>Max concurrency (CPU threads)
+          <input type="number" id="opt-concurrency" value="4" min="1" max="64">
+        </label>
+      </div>
+
+      <div class="panel-actions">
+        <button id="btn-start-process">Start reconstruction</button>
+      </div>
+
+      <div id="progress-wrap" class="progress-wrap hidden">
+        <div class="progress-bar"><div id="progress-fill" class="progress-fill"></div></div>
+        <div id="progress-label" class="progress-label">Queued&hellip;</div>
+        <pre id="job-log" class="job-log"></pre>
+      </div>
+
+      <div id="result-wrap" class="result-wrap hidden">
+        <h3>Result</h3>
+        <div class="result-grid">
+          <div class="preview-card">
+            <img id="ortho-preview" alt="Orthomosaic preview">
+            <a id="ortho-download" href="#" download>Download full orthomosaic (GeoTIFF)</a>
+            <a id="pdf-download" href="#" download style="display:block; margin-top:8px;">Download PDF Report</a>
+            <button id="btn-regen-report" class="secondary" style="margin-top: 12px; width: 100%;">Regenerate Report</button>
+          </div>
+          <div class="stats-card">
+            <table id="stats-table"></table>
+          </div>
+        </div>
+        <div class="panel-actions">
+          <button id="btn-to-step3" class="secondary">Continue to NGRDI analysis &rarr;</button>
+        </div>
+      </div>
+
+      <div id="error-wrap" class="error-wrap hidden"></div>
+    </section>
+
+    <!-- STEP 3 -->
+    <section id="panel-3" class="panel">
+      <h2>3. NGRDI vegetation index</h2>
+      <p class="hint">Computes the Normalized Green-Red Difference Index (NGRDI) from the orthomosaic to
+        highlight plant vigor and canopy health. Produces a raw single-band GeoTIFF plus a Red-Yellow-Green
+        colorized GeoTIFF, and a light preview PNG for quick viewing.</p>
+
+      <div class="options-grid">
+        <label>Color stretch min (vmin)
+          <input type="number" id="opt-ngrdi-vmin" value="-0.05" step="0.01">
+        </label>
+        <label>Color stretch max (vmax)
+          <input type="number" id="opt-ngrdi-vmax" value="0.2" step="0.01">
+        </label>
+      </div>
+
+      <div class="panel-actions">
+        <button id="btn-start-ngrdi">Run NGRDI analysis</button>
+      </div>
+
+      <div id="ngrdi-progress-wrap" class="progress-wrap hidden">
+        <div class="progress-bar"><div id="ngrdi-progress-fill" class="progress-fill"></div></div>
+        <div id="ngrdi-progress-label" class="progress-label">Queued&hellip;</div>
+        <pre id="ngrdi-job-log" class="job-log"></pre>
+      </div>
+
+      <div id="ngrdi-result-wrap" class="result-wrap hidden">
+        <h3>Result</h3>
+        <div class="ngrdi-preview-grid">
+          <div class="preview-card">
+            <p class="hint">NGRDI (Red-Yellow-Green)</p>
+            <img id="ngrdi-preview" alt="NGRDI preview">
+          </div>
+        </div>
+        <div class="upload-summary" style="margin-top:16px;">
+          <span id="ngrdi-time-label"></span>
+        </div>
+        <a id="ngrdi-raw-download" href="#" download>Download raw NGRDI (GeoTIFF, float32)</a><br>
+        <a id="ngrdi-colored-download" href="#" download>Download colorized NGRDI (GeoTIFF, RGB)</a>
+        <div class="panel-actions">
+          <button id="btn-to-step4" class="secondary">Continue to detection &rarr;</button>
+        </div>
+      </div>
+
+      <div id="ngrdi-error-wrap" class="error-wrap hidden"></div>
+    </section>
+
+    <!-- STEP 4 -->
+    <section id="panel-4" class="panel">
+      <h2>4. YOLOv8 detection</h2>
+      <p class="hint">Not wired up yet &mdash; next step once the NGRDI pipeline above is validated
+        on your tea plantation data.</p>
+    </section>
+  </main>
+
+  <div id="confirm-modal" class="modal-overlay hidden">
+    <div class="modal-box">
+      <p id="confirm-modal-message">Are you sure?</p>
+      <div class="modal-actions">
+        <button id="confirm-modal-cancel" class="secondary">Cancel</button>
+        <button id="confirm-modal-ok" class="danger">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>

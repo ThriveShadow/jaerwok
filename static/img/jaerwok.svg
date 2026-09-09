@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800" width="100%" height="100%">
+  <defs>
+    <style>
+      .bg { fill: none; }
+      .primary-fill { fill: #1B4D3E; }
+      .primary-stroke { fill: none; stroke: #1B4D3E; stroke-linecap: round; stroke-linejoin: round; }
+      .knockout { fill: none; }
+      .knockout-stroke { stroke: none; }
+      .brand-text { font-family: 'Montserrat', system-ui, sans-serif; font-weight: 900; font-size: 64px; fill: #1B4D3E; letter-spacing: 6px; text-anchor: middle; }
+      .sub-text { font-family: 'Montserrat', system-ui, sans-serif; font-weight: 700; font-size: 19px; fill: #1B4D3E; letter-spacing: 7px; text-anchor: middle; }
+    </style>
+    
+    <!-- Clip path to keep plantation fields cleanly inside the aperture -->
+    <clipPath id="inner-lens">
+      <circle cx="0" cy="0" r="136"/>
+    </clipPath>
+  </defs>
+
+  <!-- Transparent Background -->
+  <rect width="800" height="800" class="bg"/>
+
+  <!-- Central Emblem Group -->
+  <g transform="translate(400, 320)">
+    
+    <!-- Outer Frame: Camera Aperture Ring -->
+    <g class="primary-stroke">
+      <!-- Outer casing rings -->
+      <circle cx="0" cy="0" r="190" stroke-width="10"/>
+      <circle cx="0" cy="0" r="140" stroke-width="6"/>
+
+      <!-- 6 Interlocking Aperture Blades -->
+      <g stroke-width="8">
+        <line x1="70" y1="121.2" x2="190" y2="0" transform="rotate(0)" />
+        <line x1="70" y1="121.2" x2="190" y2="0" transform="rotate(60)" />
+        <line x1="70" y1="121.2" x2="190" y2="0" transform="rotate(120)" />
+        <line x1="70" y1="121.2" x2="190" y2="0" transform="rotate(180)" />
+        <line x1="70" y1="121.2" x2="190" y2="0" transform="rotate(240)" />
+        <line x1="70" y1="121.2" x2="190" y2="0" transform="rotate(300)" />
+      </g>
+    </g>
+
+    <!-- Inner Background: Plantation Mapping Layout -->
+    <g clip-path="url(#inner-lens)" class="primary-stroke">
+      <!-- Topography / Rolling Hills -->
+      <path d="M -150 15 Q -70 -15 0 20 T 150 10" stroke-width="5"/>
+      <path d="M -150 50 Q -50 15 40 65 T 150 40" stroke-width="4.5"/>
+      <path d="M -150 90 Q -30 55 60 100 T 150 75" stroke-width="4"/>
+      
+      <!-- Perspective Lines mapping the plantation crop rows -->
+      <g stroke-width="3.5" opacity="0.9">
+        <path d="M -80 23 L -130 150" />
+        <path d="M -35 25 L -55 150" />
+        <path d="M 10 27 L 5 150" />
+        <path d="M 55 26 L 70 150" />
+        <path d="M 100 21 L 140 150" />
+      </g>
+      
+    </g>
+
+    <!-- Foreground: Fixed-Wing UAV (Side View, Pusher Configuration) -->
+    <g transform="translate(0, -35)">
+
+      <!-- Main Fuselage with integrated belly payload bay -->
+      <path d="M -80 -2 
+               C -80 -12, -60 -18, -30 -18 
+               L 30 -15 
+               L 65 -35 
+               L 75 -35 
+               L 65 -10 
+               L 75 -10 
+               L 75 0 
+               L 50 4 
+               L 10 4 
+               L -55 4 
+               C -75 4, -80 2, -80 -2 Z" 
+            class="primary-fill" stroke="#1B4D3E" stroke-width="2" stroke-linejoin="round"/>
+      
+      <!-- Swept High-Wing (Top-down edge perspective) -->
+      <path d="M -40 -16 L -25 -27 L 15 -27 L 0 -15 Z" 
+            class="primary-fill knockout-stroke" stroke-width="3" stroke-linejoin="round"/>
+
+    </g>
+
+  </g>
+
+  <!-- Typography Section -->
+  <text x="400" y="610" class="brand-text">JAERWOK</text>
+  <text x="400" y="655" class="sub-text">PLANTATION MAPPING SYSTEM</text>
+
+</svg>

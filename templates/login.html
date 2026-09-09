@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Login - Jaerwok Plantation Mapping</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+  <div style="max-width: 360px; margin: 80px auto; padding: 24px; background: #fff; border: 1px solid var(--border); border-radius: 10px;">
+    <div style="text-align:center; margin-bottom: 20px;">
+      <img src="{{ url_for('static', filename='img/jaerwok.svg') }}" alt="Jaerwok logo" style="width: 56px; height: 56px;">
+      <h2 style="margin: 8px 0 0;">Sign in</h2>
+    </div>
+    {% if error %}
+      <div class="error-wrap" style="margin-bottom: 16px;">{{ error }}</div>
+    {% endif %}
+    <form method="POST">
+      <div class="options-grid" style="grid-template-columns: 1fr; gap: 12px;">
+        <label>Username
+          <input type="text" name="username" required autofocus>
+        </label>
+        <label>Password
+          <input type="password" name="password" required>
+        </label>
+      </div>
+      <button type="submit" style="width: 100%; margin-top: 16px;">Sign in</button>
+    </form>
+  </div>
+</body>
+</html>
