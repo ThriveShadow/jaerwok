@@ -20,6 +20,18 @@
   const resultWrap = document.getElementById("result-wrap");
   const errorWrap = document.getElementById("error-wrap");
 
+  const optYoloModel = document.getElementById("opt-yolo-model");
+  const btnUploadModel = document.getElementById("btn-upload-model");
+  const modelFileInput = document.getElementById("model-file-input");
+  const btnStartYolo = document.getElementById("btn-start-yolo");
+  const yoloProgressWrap = document.getElementById("yolo-progress-wrap");
+  const yoloProgressFill = document.getElementById("yolo-progress-fill");
+  const yoloProgressLabel = document.getElementById("yolo-progress-label");
+  const yoloJobLog = document.getElementById("yolo-job-log");
+  const yoloResultWrap = document.getElementById("yolo-result-wrap");
+  const yoloErrorWrap = document.getElementById("yolo-error-wrap");
+  let yoloPollTimer = null;
+
   // ---- Confirm modal ---------------------------------------------------
   const confirmModal = document.getElementById("confirm-modal");
   const confirmMessage = document.getElementById("confirm-modal-message");
@@ -529,4 +541,135 @@
 
   const btnToStep4 = document.getElementById("btn-to-step4");
   if (btnToStep4) btnToStep4.addEventListener("click", () => goToStep(4));
+
+    // ---- Models: list / upload -------------------------------------------
+  async function loadModels() {
+    const res = await fetch("/api/models");
+    const data = await res.json();
+    optYoloModel.innerHTML = "";
+    if (!data.models || data.models.length === 0) {
+      optYoloModel.innerHTML = "<option value=''>No models uploaded yet</option>";
+      return;
+    }
+    data.models.forEach(name => {
+      const opt = document.createElement("option");
+      opt.value = name;
+      opt.textContent = name;
+      optYoloModel.appendChild(opt);
+    });
+  }
+
+  if (btnUploadModel) {
+    btnUploadModel.addEventListener("click", () => modelFileInput.click());
+    modelFileInput.addEventListener("change", async () => {
+      const file = modelFileInput.files[0];
+      if (!file) return;
+      const form = new FormData();
+      form.append("model", file);
+      btnUploadModel.disabled = true;
+      btnUploadModel.textContent = "Uploading...";
+      try {
+        const res = await fetch("/api/models", { method: "POST", body: form });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "upload failed");
+        await loadModels();
+      } catch (err) {
+        alert(`Model upload failed: ${err.message}`);
+      } finally {
+        btnUploadModel.disabled = false;
+        btnUploadModel.textContent = "+ Upload model (.pt)";
+        modelFileInput.value = "";
+      }
+    });
+  }
+
+  // ---- Step 4: YOLOv8 detection ------------------------------------------
+  if (btnStartYolo) {
+    btnStartYolo.addEventListener("click", async () => {
+      if (!projectId) { alert("Run reconstruction first."); return; }
+      const model = optYoloModel.value;
+      if (!model) { alert("Upload or select a model first."); return; }
+
+      yoloErrorWrap.classList.add("hidden");
+      yoloResultWrap.classList.add("hidden");
+      yoloProgressWrap.classList.remove("hidden");
+      yoloProgressFill.style.width = "1%";
+      yoloProgressLabel.textContent = "Starting...";
+      yoloJobLog.textContent = "";
+      btnStartYolo.disabled = true;
+
+      const opts = {
+        model,
+        conf: Number(document.getElementById("opt-yolo-conf").value),
+        iou: Number(document.getElementById("opt-yolo-iou").value),
+        tile_size: Number(document.getElementById("opt-yolo-tile").value),
+      };
+
+      try {
+        const res = await fetch(`/api/yolo/${projectId}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(opts),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "failed to start");
+        yoloPollTimer = setInterval(pollYoloStatus, 2000);
+      } catch (err) {
+        showYoloError(err.message);
+        btnStartYolo.disabled = false;
+      }
+    });
+  }
+
+  async function pollYoloStatus() {
+    const res = await fetch(`/api/yolo/status/${projectId}`);
+    const job = await res.json();
+    if (!res.ok) return;
+
+    yoloProgressFill.style.width = `${job.progress || 0}%`;
+    yoloProgressLabel.textContent = job.log.length ? job.log[job.log.length - 1] : "Working...";
+    yoloJobLog.textContent = job.log.join("\n");
+    yoloJobLog.scrollTop = yoloJobLog.scrollHeight;
+
+    if (job.status === "done") {
+      clearInterval(yoloPollTimer);
+      btnStartYolo.disabled = false;
+      await loadYoloResult();
+    } else if (job.status === "error") {
+      clearInterval(yoloPollTimer);
+      btnStartYolo.disabled = false;
+      showYoloError(job.error || "Detection failed.");
+    }
+  }
+
+  async function loadYoloResult() {
+    const res = await fetch(`/api/yolo/result/${projectId}`);
+    const data = await res.json();
+    if (!res.ok) { showYoloError(data.error || "Could not load detection result."); return; }
+
+    yoloResultWrap.classList.remove("hidden");
+    const img = document.getElementById("yolo-preview");
+    img.src = data.annotated_url + `?t=${Date.now()}`;
+    document.getElementById("yolo-download").href = data.annotated_url;
+
+    const rows = [
+      ["Model", data.model_file],
+      ["Total detections", data.total_detections],
+      ["Confidence threshold", data.conf],
+      ["IOU threshold", data.iou],
+      ["Processing time (s)", data.processing_time_s],
+    ];
+    Object.entries(data.counts_by_class || {}).forEach(([name, count]) => {
+      rows.push([`  - ${name}`, count]);
+    });
+    const table = document.getElementById("yolo-stats-table");
+    table.innerHTML = rows.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join("");
+  }
+
+  function showYoloError(msg) {
+    yoloErrorWrap.textContent = msg;
+    yoloErrorWrap.classList.remove("hidden");
+  }
+
+  loadModels();
 })();

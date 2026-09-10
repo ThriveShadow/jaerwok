@@ -23,7 +23,7 @@
   <nav class="steps">
     <div class="step active" data-step="1">
       <span class="step-num">1</span>
-      <span class="step-label">Upload Images</span>
+      <span class="step-label">Project</span>
     </div>
     <div class="step" data-step="2">
       <span class="step-num">2</span>
@@ -33,7 +33,7 @@
       <span class="step-num">3</span>
       <span class="step-label">NGRDI Vegetation Index</span>
     </div>
-    <div class="step disabled" data-step="4">
+    <div class="step" data-step="4">
       <span class="step-num">4</span>
       <span class="step-label">YOLOv8 Detection (coming next)</span>
     </div>
@@ -43,13 +43,13 @@
     <!-- STEP 1 -->
     <!-- STEP 1 -->
 <section id="panel-1" class="panel active">
-  <h2>1. Upload aerial images</h2>
-
+  
   <div class="panel-actions" style="margin-bottom: 16px;">
     <button id="btn-new-project">+ New Project</button>
   </div>
 
   <div id="upload-section" class="hidden">
+    <h2>1. Upload aerial images</h2>
     <p class="hint">Drop the raw JPG/PNG frames from your flight. Aim for 70&ndash;80% forward overlap and
       60%+ side overlap between neighboring shots &mdash; that overlap is what OpenSfM needs to match
       features and reconstruct camera positions.</p>
@@ -192,8 +192,54 @@
     <!-- STEP 4 -->
     <section id="panel-4" class="panel">
       <h2>4. YOLOv8 detection</h2>
-      <p class="hint">Not wired up yet &mdash; next step once the NGRDI pipeline above is validated
-        on your tea plantation data.</p>
+      <p class="hint">Runs a YOLOv8 model over the orthomosaic. The image is chunked into
+        overlapping tiles for CPU inference (handles large orthophotos without loading the
+        full image into memory), then detections are de-duplicated and drawn onto a single
+        annotated JPEG.</p>
+
+      <div class="model-manager" style="margin-bottom: 20px;">
+        <h3 style="font-size: 1rem; margin-bottom: 8px;">Models</h3>
+        <div class="upload-summary">
+          <select id="opt-yolo-model"></select>
+          <button id="btn-upload-model" class="secondary">+ Upload model (.pt)</button>
+          <input type="file" id="model-file-input" accept=".pt" hidden>
+        </div>
+      </div>
+
+      <div class="options-grid">
+        <label>Confidence threshold
+          <input type="number" id="opt-yolo-conf" value="0.25" step="0.01" min="0" max="1">
+        </label>
+        <label>IOU threshold
+          <input type="number" id="opt-yolo-iou" value="0.35" step="0.01" min="0" max="1">
+        </label>
+        <label>Tile size (px)
+          <input type="number" id="opt-yolo-tile" value="1024" step="128" min="256">
+        </label>
+      </div>
+
+      <div class="panel-actions">
+        <button id="btn-start-yolo">Run YOLOv8 detection</button>
+      </div>
+
+      <div id="yolo-progress-wrap" class="progress-wrap hidden">
+        <div class="progress-bar"><div id="yolo-progress-fill" class="progress-fill"></div></div>
+        <div id="yolo-progress-label" class="progress-label">Queued&hellip;</div>
+        <pre id="yolo-job-log" class="job-log"></pre>
+      </div>
+
+      <div id="yolo-result-wrap" class="result-wrap hidden">
+        <h3>Result</h3>
+        <div class="preview-card">
+          <img id="yolo-preview" alt="Detection preview">
+          <a id="yolo-download" href="#" download style="display:block; margin-top:8px;">Download annotated JPEG</a>
+        </div>
+        <div class="stats-card" style="margin-top: 16px;">
+          <table id="yolo-stats-table"></table>
+        </div>
+      </div>
+
+      <div id="yolo-error-wrap" class="error-wrap hidden"></div>
     </section>
   </main>
 

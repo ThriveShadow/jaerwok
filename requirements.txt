@@ -10,3 +10,5 @@ cairosvg>=2.7
 paramiko>=3.4
 requests>=2.31
 boto3
+ultralytics>=8.1
+opencv-python-headless>=4.9

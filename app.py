@@ -30,10 +30,15 @@ from pipeline import ODMPipeline, PipelineError
 from report_gen import build_report
 
 from ngrdi import NGRDIProcessor, NGRDIError
+from yolo_detect import YoloDetector, YoloDetectError
 
 BASE_DIR = Path(__file__).resolve().parent
 PROJECTS_DIR = BASE_DIR / "projects"
 PROJECTS_DIR.mkdir(exist_ok=True)
+
+MODELS_DIR = BASE_DIR / "models"
+MODELS_DIR.mkdir(exist_ok=True)
+ALLOWED_MODEL_EXTENSIONS = {".pt"}
 
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tif", ".tiff"}
 MAX_CONTENT_LENGTH = 4 * 1024 * 1024 * 1024  # 4 GB total upload cap, adjust as needed
@@ -79,6 +84,10 @@ JOBS_LOCK = threading.Lock()
 NGRDI_JOBS = {}
 NGRDI_JOBS_LOCK = threading.Lock()
 
+# In-memory job registry for the YOLOv8 detection step: {project_id: {...}}
+YOLO_JOBS = {}
+YOLO_JOBS_LOCK = threading.Lock()
+
 
 def project_dir(project_id: str) -> Path:
     return PROJECTS_DIR / project_id
@@ -91,6 +100,8 @@ def images_dir(project_id: str) -> Path:
 def is_allowed(filename: str) -> bool:
     return Path(filename).suffix.lower() in ALLOWED_EXTENSIONS
 
+def is_allowed_model(filename: str) -> bool:
+    return Path(filename).suffix.lower() in ALLOWED_MODEL_EXTENSIONS
 
 @app.route("/")
 def index():
@@ -359,6 +370,115 @@ def ngrdi_result(project_id):
     data["preview_url"] = url_for("serve_artifact", project_id=project_id, filename="ngrdi/ngrdi_preview.png")
     data["raw_download_url"] = url_for("serve_artifact", project_id=project_id, filename=f"ngrdi/{data['raw_geotiff']}")
     data["colored_download_url"] = url_for("serve_artifact", project_id=project_id, filename=f"ngrdi/{data['colored_geotiff']}")
+    return jsonify(data)
+
+# ---------------------------------------------------------------------------
+# Models: upload / list / delete YOLOv8 .pt files
+# ---------------------------------------------------------------------------
+@app.route("/api/models", methods=["GET"])
+def list_models():
+    names = sorted(p.name for p in MODELS_DIR.glob("*.pt"))
+    return jsonify({"models": names})
+
+
+@app.route("/api/models", methods=["POST"])
+def upload_model():
+    f = request.files.get("model")
+    if not f or not f.filename:
+        return jsonify({"error": "no model file received"}), 400
+    if not is_allowed_model(f.filename):
+        return jsonify({"error": "only .pt model files are supported"}), 400
+    safe_name = secure_filename(f.filename)
+    dest = MODELS_DIR / safe_name
+    f.save(dest)
+    return jsonify({"saved": safe_name})
+
+
+@app.route("/api/models/<filename>", methods=["DELETE"])
+def delete_model(filename):
+    target = MODELS_DIR / secure_filename(filename)
+    if target.exists():
+        target.unlink()
+        return jsonify({"deleted": filename})
+    return jsonify({"error": "not found"}), 404
+
+
+# ---------------------------------------------------------------------------
+# Step 4: YOLOv8 detection
+# ---------------------------------------------------------------------------
+@app.route("/api/yolo/<project_id>", methods=["POST"])
+def yolo_process(project_id):
+    pdir = project_dir(project_id)
+    ortho = pdir / "odm_orthophoto" / "odm_orthophoto.tif"
+    if not ortho.exists():
+        return jsonify({"error": "run orthomosaic reconstruction first"}), 400
+
+    opts = request.get_json(silent=True) or {}
+    model_filename = opts.get("model")
+    if not model_filename:
+        return jsonify({"error": "no model selected"}), 400
+    model_path = MODELS_DIR / secure_filename(model_filename)
+    if not model_path.exists():
+        return jsonify({"error": f"model not found: {model_filename}"}), 400
+
+    with YOLO_JOBS_LOCK:
+        job = YOLO_JOBS.get(project_id)
+        if job and job["status"] == "running":
+            return jsonify({"error": "already running"}), 409
+        YOLO_JOBS[project_id] = {"status": "running", "progress": 1, "log": ["queued"], "error": None}
+
+    conf = float(opts.get("conf", 0.25))
+    iou = float(opts.get("iou", 0.35))
+    tile_size = int(opts.get("tile_size", 1024))
+    overlap = int(opts.get("overlap", 160))
+
+    def _run():
+        detector = YoloDetector(
+            project_dir=pdir, model_path=model_path,
+            conf=conf, iou=iou, tile_size=tile_size, overlap=overlap,
+        )
+        try:
+            for progress, message in detector.run():
+                with YOLO_JOBS_LOCK:
+                    YOLO_JOBS[project_id]["progress"] = progress
+                    ts = datetime.now().strftime("%H:%M:%S")
+                    YOLO_JOBS[project_id]["log"].append(f"[{ts}] {message}")
+            with YOLO_JOBS_LOCK:
+                YOLO_JOBS[project_id]["status"] = "done"
+                YOLO_JOBS[project_id]["progress"] = 100
+        except YoloDetectError as e:
+            with YOLO_JOBS_LOCK:
+                YOLO_JOBS[project_id]["status"] = "error"
+                YOLO_JOBS[project_id]["error"] = str(e)
+        except Exception as e:  # noqa: BLE001
+            with YOLO_JOBS_LOCK:
+                YOLO_JOBS[project_id]["status"] = "error"
+                YOLO_JOBS[project_id]["error"] = f"unexpected error: {e}"
+
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+    return jsonify({"project_id": project_id, "status": "running"})
+
+
+@app.route("/api/yolo/status/<project_id>", methods=["GET"])
+def yolo_status(project_id):
+    with YOLO_JOBS_LOCK:
+        job = YOLO_JOBS.get(project_id)
+    if not job:
+        return jsonify({"error": "unknown project"}), 404
+    return jsonify(job)
+
+
+@app.route("/api/yolo/result/<project_id>", methods=["GET"])
+def yolo_result(project_id):
+    pdir = project_dir(project_id)
+    meta_path = pdir / "yolo" / "yolo_report.json"
+    if not meta_path.exists():
+        return jsonify({"error": "detection result not ready"}), 404
+    with open(meta_path) as f:
+        data = json.load(f)
+    data["annotated_url"] = url_for("serve_artifact", project_id=project_id, filename=f"yolo/{data['annotated_image']}")
+    data["detections_download_url"] = url_for("serve_artifact", project_id=project_id, filename="yolo/detections.json")
     return jsonify(data)
 
 
