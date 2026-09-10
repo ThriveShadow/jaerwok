@@ -257,6 +257,7 @@ class RunPodODMPipeline:
         print("[runpod_pipeline] _run_remote_odm() entered, building command")
 
         env_prefix = (
+            "export PYTHONUNBUFFERED=1; "
             "export PATH=/code/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; "
             "export PYTHONPATH=:/code/SuperBuild/install/local/lib/python3.12/dist-packages:"
             "/code/SuperBuild/install/lib/python3.12/dist-packages:/code/SuperBuild/install/bin/opensfm; "
@@ -276,54 +277,93 @@ class RunPodODMPipeline:
 
         print(f"[runpod_pipeline] ODM command: {cmd}")
 
-        # Run ODM directly inside the opendronemap/odm container.
-        stdin, stdout, stderr = self.ssh.exec_command(
-            cmd,
-            get_pty=True,
-        )
+        self.ssh.get_transport().set_keepalive(30)
+
+        # CRITICAL: get_pty=False prevents the EOF hang
+        stdin, stdout, stderr = self.ssh.exec_command(cmd, get_pty=False)
+        channel = stdout.channel
+        channel.settimeout(1.0)
 
         last_progress = 25
         recent_lines = []
+        last_output_time = time.time()
+        STALL_TIMEOUT_S = 600
 
         print("[runpod_pipeline] Remote ODM process started")
 
-        for raw_line in stdout:
-            line = raw_line.rstrip()
+        buf = ""
+        while True:
+            if channel.exit_status_ready() and not channel.recv_ready():
+                break
 
-            if not line:
-                continue
+            try:
+                chunk = channel.recv(4096)
+                if not chunk:
+                    if channel.exit_status_ready():
+                        break
+                    continue
+                
+                last_output_time = time.time()
+                buf += chunk.decode(errors="replace")
+                
+                # CRITICAL: Splitting on both \n and \r for real-time progress
+                while "\n" in buf or "\r" in buf:
+                    n_idx = buf.find("\n")
+                    r_idx = buf.find("\r")
+                    
+                    if n_idx != -1 and r_idx != -1:
+                        split_idx = min(n_idx, r_idx)
+                    else:
+                        split_idx = max(n_idx, r_idx)
+                        
+                    raw_line = buf[:split_idx]
+                    buf = buf[split_idx + 1:] 
+                    
+                    line = raw_line.strip()
+                    if not line:
+                        continue
 
-            print(f"[RunPod ODM] {line}")
+                    print(f"[RunPod ODM] {line}")
 
-            recent_lines.append(line)
-            if len(recent_lines) > 30:
-                recent_lines.pop(0)
+                    recent_lines.append(line)
+                    if len(recent_lines) > 30:
+                        recent_lines.pop(0)
 
-            for pattern, pct, label in STAGE_MARKERS:
-                if re.search(pattern, line, re.IGNORECASE):
-                    scaled = 25 + int((pct / 97) * 63)
+                    for pattern, pct, label in STAGE_MARKERS:
+                        if re.search(pattern, line, re.IGNORECASE):
+                            scaled = 25 + int((pct / 97) * 63)
+                            if scaled > last_progress:
+                                last_progress = scaled
+                                yield scaled, label
+                            break
+                    else:
+                        if re.search(r"error|exception|traceback|failed|fatal", line, re.IGNORECASE):
+                            yield last_progress, line
 
-                    if scaled > last_progress:
-                        last_progress = scaled
-                        yield scaled, label
+            except TimeoutError:
+                pass
+            except Exception as sock_err:
+                if "timed out" not in str(sock_err).lower():
+                    raise
 
+            if time.time() - last_output_time > STALL_TIMEOUT_S:
+                _, check_out, _ = self.ssh.exec_command(
+                    f"test -f /workspace/{self.project_dir.name}/odm_orthophoto/odm_orthophoto.tif; echo $?"
+                )
+                if check_out.read().decode().strip() == "0":
+                    print("[runpod_pipeline] SSH channel stalled but orthophoto already exists on remote — treating as success")
                     break
-            else:
-                if re.search(
-                    r"error|exception|traceback|failed|fatal",
-                    line,
-                    re.IGNORECASE,
-                ):
-                    yield last_progress, line
+                raise RunPodPipelineError(
+                    f"No output from remote ODM for {STALL_TIMEOUT_S}s (stuck at {last_progress}%). "
+                    f"Last lines:\n" + "\n".join(recent_lines)
+                )
 
-        exit_status = stdout.channel.recv_exit_status()
-
+        exit_status = channel.recv_exit_status() if channel.exit_status_ready() else 0
         print(f"[runpod_pipeline] Remote ODM exit status: {exit_status}")
 
-        if exit_status != 0:
+        if exit_status not in (0,):
             error_output = stderr.read().decode(errors="replace").strip()
             error_context = "\n".join(recent_lines)
-
             raise RunPodPipelineError(
                 f"ODM exited with code {exit_status}.\n"
                 f"Last output:\n{error_context}\n"
@@ -333,13 +373,11 @@ class RunPodODMPipeline:
         _, check_out, _ = self.ssh.exec_command(
             f"test -f /workspace/{self.project_dir.name}/odm_orthophoto/odm_orthophoto.tif; echo $?"
         )
-
         result = check_out.read().decode().strip()
-
         if result != "0":
             raise RunPodPipelineError(
                 "ODM exited successfully, but "
-                "/root/project/odm_orthophoto/odm_orthophoto.tif was not produced."
+                "odm_orthophoto/odm_orthophoto.tif was not produced."
             )
 
     def _download_important_files(self):
