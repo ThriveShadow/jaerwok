@@ -61,6 +61,7 @@ class ReportPDF(FPDF):
         self.set_text_color(120, 120, 120)
         self.cell(0, 10, f"Page {self.page_no()}/{{nb}}", align="C")
 
+
 def _read_odm_stats(project_dir: Path, fallback_image_count: Optional[int] = None) -> dict:
     stats_path = project_dir / "odm_report" / "stats.json"
     if not stats_path.exists():
@@ -92,12 +93,14 @@ def _read_odm_stats(project_dir: Path, fallback_image_count: Optional[int] = Non
     out["total_time_human"] = raw.get("odm_processing_statistics", {}).get("total_time_human", "N/A")
     return out
 
+
 def _make_preview_png(ortho_path: Path, out_png: Path) -> bool:
-    if not ortho_path.exists(): return False
+    if not ortho_path.exists():
+        return False
     try:
         subprocess.run(["gdal_translate", "-of", "PNG", "-outsize", "12%", "12%", "-b", "1", "-b", "2", "-b", "3", str(ortho_path), str(out_png)], check=True, capture_output=True)
         return out_png.exists()
-    except:
+    except Exception:
         pass
     try:
         from PIL import Image
@@ -107,8 +110,9 @@ def _make_preview_png(ortho_path: Path, out_png: Path) -> bool:
             im.thumbnail((2000, 2000))
             im.save(out_png)
         return True
-    except:
+    except Exception:
         return False
+
 
 def _plot_usage(usage_file: Path, out_png: Path):
     if not usage_file.exists():
@@ -122,158 +126,56 @@ def _plot_usage(usage_file: Path, out_png: Path):
 
     fig, ax = plt.subplots(figsize=(12, 7))
 
-    # ---------------------------------------------------------
-    # Resource usage
-    # ---------------------------------------------------------
-    ax.plot(
-        data["time"],
-        data["cpu"],
-        label="CPU %",
-        color="red",
-        linewidth=1.5
-    )
-
-    ax.plot(
-        data["time"],
-        data["ram"],
-        label="RAM %",
-        color="blue",
-        linewidth=1.5
-    )
-
-    # Extra headroom for annotations
+    ax.plot(data["time"], data["cpu"], label="CPU %", color="red", linewidth=1.5)
+    ax.plot(data["time"], data["ram"], label="RAM %", color="blue", linewidth=1.5)
     ax.set_ylim(0, 125)
 
-    # ---------------------------------------------------------
-    # Pipeline markers
-    # ---------------------------------------------------------
     if "markers" in data:
-        markers = sorted(
-            data["markers"],
-            key=lambda m: m["time"]
-        )
-
-        # Events less than 3 seconds apart are considered
-        # part of the same pipeline stage/group.
+        markers = sorted(data["markers"], key=lambda m: m["time"])
         GROUP_THRESHOLD = 3.0
-
         groups = []
         current_group = []
-
         for m in markers:
             if not current_group:
                 current_group = [m]
-
             elif m["time"] - current_group[-1]["time"] < GROUP_THRESHOLD:
                 current_group.append(m)
-
             else:
                 groups.append(current_group)
                 current_group = [m]
-
         if current_group:
             groups.append(current_group)
 
-        # -----------------------------------------------------
-        # Draw each group
-        # -----------------------------------------------------
         for group in groups:
-
-            # Use the FIRST event as the group's timestamp.
             group_time = group[0]["time"]
+            ax.axvline(x=group_time, color="gray", linestyle="--", alpha=0.5, zorder=1)
 
-            # One vertical marker for the whole group
-            ax.axvline(
-                x=group_time,
-                color="gray",
-                linestyle="--",
-                alpha=0.5,
-                zorder=1
-            )
-
-            # -------------------------------------------------
-            # Single event
-            # -------------------------------------------------
             if len(group) == 1:
-
                 m = group[0]
-
                 label = f"{m['label']} ({int(m['time'])}s)"
-
-                ax.text(
-                    group_time,
-                    75,
-                    label,
-                    rotation=90,
-                    ha="center",
-                    va="center",
-                    fontsize=9,
-                    color="black",
-                    bbox=dict(
-                        boxstyle="round,pad=0.25",
-                        facecolor="white",
-                        alpha=0.85,
-                        edgecolor="none"
-                    ),
-                    zorder=5
-                )
-
-            # -------------------------------------------------
-            # Multiple events in the same group
-            # -------------------------------------------------
+                ax.text(group_time, 75, label, rotation=90, ha="center", va="center",
+                        fontsize=9, color="black",
+                        bbox=dict(boxstyle="round,pad=0.25", facecolor="white", alpha=0.85, edgecolor="none"),
+                        zorder=5)
             else:
-
-                lines = []
-
-                for m in group:
-                    lines.append(
-                        f"• {m['label']} ({int(m['time'])}s)"
-                    )
-
+                lines = [f"• {m['label']} ({int(m['time'])}s)" for m in group]
                 label = "\n".join(lines)
+                ax.text(group_time, 75, label, rotation=90, ha="center", va="center",
+                        fontsize=9, color="black", linespacing=1.3,
+                        bbox=dict(boxstyle="round,pad=0.35", facecolor="white", alpha=0.9, edgecolor="none"),
+                        zorder=5)
 
-                ax.text(
-                    group_time,
-                    75,
-                    label,
-                    rotation=90,
-                    ha="center",
-                    va="center",
-                    fontsize=9,
-                    color="black",
-                    linespacing=1.3,
-                    bbox=dict(
-                        boxstyle="round,pad=0.35",
-                        facecolor="white",
-                        alpha=0.9,
-                        edgecolor="none"
-                    ),
-                    zorder=5
-                )
-
-    # ---------------------------------------------------------
-    # Graph formatting
-    # ---------------------------------------------------------
     ax.set_xlabel("Time (seconds)")
     ax.set_ylabel("Usage %")
-
-    ax.set_title(
-        "System Resource Usage (CPU & RAM)"
-    )
-
+    ax.set_title("System Resource Usage (CPU & RAM)")
     ax.legend(loc="upper right")
 
     plt.tight_layout()
-
-    plt.savefig(
-        out_png,
-        dpi=150,
-        bbox_inches="tight"
-    )
-
+    plt.savefig(out_png, dpi=150, bbox_inches="tight")
     plt.close()
 
     return out_png.exists()
+
 
 def _image_dims_mm(path: Path, max_w: float, max_h: float):
     """Return (w, h) in mm for an image scaled to fit within max_w x max_h,
@@ -283,7 +185,7 @@ def _image_dims_mm(path: Path, max_w: float, max_h: float):
         with Image.open(path) as im:
             px_w, px_h = im.size
     except Exception:
-        return max_w, max_w * 0.75  # fallback guess if dimensions can't be read
+        return max_w, max_w * 0.75
 
     aspect = px_h / px_w
     w = max_w
@@ -293,9 +195,56 @@ def _image_dims_mm(path: Path, max_w: float, max_h: float):
         w = h / aspect
     return w, h
 
-def _generate_pdf(data: dict, preview_png: Path, graph_png: Path,
+
+# ---------------------------------------------------------------------------
+# Step-level summary: cheap, no PDF. Called right after step 2 (reconstruction)
+# finishes so the step-2 result panel (preview + stats) has something to show.
+# ---------------------------------------------------------------------------
+def build_summary(project_dir: Path) -> dict:
+    project_dir = Path(project_dir)
+    report_dir = project_dir / "report"
+    report_dir.mkdir(exist_ok=True)
+
+    ortho_path = project_dir / "odm_orthophoto" / "odm_orthophoto.tif"
+    preview_png = report_dir / "orthomosaic_preview.png"
+
+    preview_ok = _make_preview_png(ortho_path, preview_png)
+
+    n_input_images = len(list((project_dir / "images").glob("*")))
+    stats = _read_odm_stats(project_dir, fallback_image_count=n_input_images)
+
+    ngrdi_meta_path = project_dir / "ngrdi" / "ngrdi_report.json"
+    yolo_meta_path = project_dir / "yolo" / "yolo_report.json"
+
+    data = {
+        "input_images": n_input_images,
+        "images_used": stats.get("images_used"),
+        "reconstructed_points": stats.get("points"),
+        "average_gsd_cm": stats.get("gsd_cm"),
+        "area_sqm": stats.get("area_sqm"),
+        "processing_time_s": stats.get("processing_time_s"),
+        "orthophoto_exists": ortho_path.exists(),
+        "orthophoto_size_bytes": ortho_path.stat().st_size if ortho_path.exists() else None,
+        "preview_available": preview_ok,
+        "ngrdi_available": ngrdi_meta_path.exists(),
+        "yolo_available": yolo_meta_path.exists(),
+    }
+
+    with open(report_dir / "report.json", "w") as f:
+        json.dump(data, f, indent=2)
+
+    return data
+
+
+# ---------------------------------------------------------------------------
+# Full PDF report: heavy, on-demand. Called from the new Step 5 ("Generate
+# Report" button). Pulls together ODM + NGRDI + YOLO results, whichever of
+# them exist so far.
+# ---------------------------------------------------------------------------
+def _generate_pdf(odm_stats: dict, preview_png: Path, graph_png: Path,
                    dsm_png: Optional[Path], matchgraph_png: Optional[Path],
                    ngrdi_data: Optional[dict], ngrdi_preview_png: Optional[Path],
+                   yolo_data: Optional[dict], yolo_annotated_png: Optional[Path],
                    out_pdf: Path):
     pdf = ReportPDF()
     pdf.alias_nb_pages()
@@ -326,18 +275,18 @@ def _generate_pdf(data: dict, preview_png: Path, graph_png: Path,
         x = 10 + (190 - w) / 2
         pdf.image(str(matchgraph_png), x=x, w=w, h=h)
 
-    # Processing Statistics always starts on its own fresh page.
+    # ---- ODM / reconstruction stats -------------------------------------
     pdf.add_page()
     pdf.set_font("Arial", 'B', 12)
     pdf.cell(0, 8, "Processing Statistics", ln=1)
     pdf.set_font("Arial", '', 11)
-    pdf.cell(0, 6, f"Images Used: {data.get('images_used', 'N/A')}", ln=1)
-    pdf.cell(0, 6, f"Reconstructed Points: {data.get('points', 'N/A')}", ln=1)
-    pdf.cell(0, 6, f"Mean Detected Features: {data.get('detected_features_mean', 'N/A')}", ln=1)
-    pdf.cell(0, 6, f"Average GSD: {data.get('gsd_cm', 'N/A')} cm/px", ln=1)
-    pdf.cell(0, 6, f"Area Covered: {data.get('area_sqm', 'N/A')} sqm", ln=1)
-    pdf.cell(0, 6, f"Feature Extraction Time: {data.get('feature_extraction_time', 'N/A')} s", ln=1)
-    pdf.cell(0, 6, f"Total Processing Time: {data.get('total_time_human', 'N/A')} ({data.get('processing_time_s', 'N/A')} s)", ln=1)
+    pdf.cell(0, 6, f"Images Used: {odm_stats.get('images_used', 'N/A')}", ln=1)
+    pdf.cell(0, 6, f"Reconstructed Points: {odm_stats.get('points', 'N/A')}", ln=1)
+    pdf.cell(0, 6, f"Mean Detected Features: {odm_stats.get('detected_features_mean', 'N/A')}", ln=1)
+    pdf.cell(0, 6, f"Average GSD: {odm_stats.get('gsd_cm', 'N/A')} cm/px", ln=1)
+    pdf.cell(0, 6, f"Area Covered: {odm_stats.get('area_sqm', 'N/A')} sqm", ln=1)
+    pdf.cell(0, 6, f"Feature Extraction Time: {odm_stats.get('feature_extraction_time', 'N/A')} s", ln=1)
+    pdf.cell(0, 6, f"Total Processing Time: {odm_stats.get('total_time_human', 'N/A')} ({odm_stats.get('processing_time_s', 'N/A')} s)", ln=1)
 
     if graph_png.exists():
         pdf.add_page()
@@ -348,6 +297,7 @@ def _generate_pdf(data: dict, preview_png: Path, graph_png: Path,
         x = 10 + (190 - w) / 2
         pdf.image(str(graph_png), x=x, w=w, h=h)
 
+    # ---- NGRDI section -----------------------------------------------
     if ngrdi_data:
         pdf.add_page()
         pdf.set_font("Arial", 'B', 12)
@@ -377,9 +327,42 @@ def _generate_pdf(data: dict, preview_png: Path, graph_png: Path,
             w, h = _image_dims_mm(ngrdi_preview_png, max_w=col_w, max_h=max_h)
             pdf.image(str(ngrdi_preview_png), x=105 + (col_w - w) / 2, y=y_image, w=w, h=h)
 
+    # ---- YOLOv8 detection section --------------------------------------
+    if yolo_data:
+        pdf.add_page()
+        pdf.set_font("Arial", 'B', 12)
+        pdf.cell(0, 10, "YOLOv8 Detection", ln=1)
+        pdf.set_font("Arial", '', 11)
+        pdf.cell(0, 6, f"Model: {yolo_data.get('model_file', 'N/A')}", ln=1)
+        pdf.cell(0, 6, f"Tiles Processed: {yolo_data.get('total_tiles', 'N/A')} (tile size {yolo_data.get('tile_size', 'N/A')}px, overlap {yolo_data.get('overlap', 'N/A')}px)", ln=1)
+        pdf.cell(0, 6, f"Confidence / IOU Threshold: {yolo_data.get('conf', 'N/A')} / {yolo_data.get('iou', 'N/A')}", ln=1)
+        pdf.cell(0, 6, f"Total Detections: {yolo_data.get('total_detections', 'N/A')}", ln=1)
+        pdf.cell(0, 6, f"Processing Time: {yolo_data.get('processing_time_s', 'N/A')} s", ln=1)
+
+        counts = yolo_data.get("counts_by_class") or {}
+        if counts:
+            pdf.ln(2)
+            pdf.set_font("Arial", 'B', 10)
+            pdf.cell(0, 6, "Detections by class:", ln=1)
+            pdf.set_font("Arial", '', 10)
+            for name, count in counts.items():
+                pdf.cell(0, 5, f"  - {name}: {count}", ln=1)
+
+        if yolo_annotated_png and yolo_annotated_png.exists():
+            pdf.ln(4)
+            max_h = pdf.h - pdf.get_y() - pdf.b_margin
+            w, h = _image_dims_mm(yolo_annotated_png, max_w=190, max_h=max_h)
+            x = 10 + (190 - w) / 2
+            pdf.image(str(yolo_annotated_png), x=x, w=w, h=h)
+
     pdf.output(str(out_pdf))
 
-def build_report(project_dir: Path) -> dict:
+
+def build_pdf_report(project_dir: Path) -> dict:
+    """Generates the full PDF (and a combined full_report.json) from
+    whichever of ODM / NGRDI / YOLO results currently exist on disk. Safe
+    to call at any point after step 2 - later steps just add their section
+    if/when they've been run."""
     project_dir = Path(project_dir)
     report_dir = project_dir / "report"
     report_dir.mkdir(exist_ok=True)
@@ -392,13 +375,13 @@ def build_report(project_dir: Path) -> dict:
     dsm_png = project_dir / "opensfm" / "stats" / "dsm.png"
     matchgraph_png = project_dir / "opensfm" / "stats" / "matchgraph.png"
 
-    preview_ok = _make_preview_png(ortho_path, preview_png)
+    if not preview_png.exists():
+        _make_preview_png(ortho_path, preview_png)
     _plot_usage(report_dir / "usage.json", graph_png)
 
     n_input_images = len(list((project_dir / "images").glob("*")))
-    stats = _read_odm_stats(project_dir, fallback_image_count=n_input_images)
+    odm_stats = _read_odm_stats(project_dir, fallback_image_count=n_input_images)
 
-    # NGRDI is optional - only present once the NGRDI step has been run
     ngrdi_meta_path = project_dir / "ngrdi" / "ngrdi_report.json"
     ngrdi_data = None
     ngrdi_preview_png = None
@@ -409,23 +392,29 @@ def build_report(project_dir: Path) -> dict:
         if candidate.exists():
             ngrdi_preview_png = candidate
 
-    data = {
+    yolo_meta_path = project_dir / "yolo" / "yolo_report.json"
+    yolo_data = None
+    yolo_annotated_png = None
+    if yolo_meta_path.exists():
+        with open(yolo_meta_path) as f:
+            yolo_data = json.load(f)
+        candidate = project_dir / "yolo" / yolo_data.get("annotated_image", "")
+        if candidate.exists():
+            yolo_annotated_png = candidate
+
+    _generate_pdf(odm_stats, preview_png, graph_png, dsm_png, matchgraph_png,
+                  ngrdi_data, ngrdi_preview_png, yolo_data, yolo_annotated_png,
+                  pdf_report)
+
+    full_data = {
         "input_images": n_input_images,
-        "images_used": stats.get("images_used"),
-        "reconstructed_points": stats.get("points"),
-        "average_gsd_cm": stats.get("gsd_cm"),
-        "area_sqm": stats.get("area_sqm"),
-        "processing_time_s": stats.get("processing_time_s"),
+        "odm": odm_stats,
+        "ngrdi": ngrdi_data,
+        "yolo": yolo_data,
         "orthophoto_exists": ortho_path.exists(),
         "orthophoto_size_bytes": ortho_path.stat().st_size if ortho_path.exists() else None,
-        "preview_available": preview_ok,
-        "ngrdi_available": ngrdi_data is not None,
     }
+    with open(report_dir / "full_report.json", "w") as f:
+        json.dump(full_data, f, indent=2)
 
-    _generate_pdf(stats, preview_png, graph_png, dsm_png, matchgraph_png,
-                  ngrdi_data, ngrdi_preview_png, pdf_report)
-
-    with open(report_dir / "report.json", "w") as f:
-        json.dump(data, f, indent=2)
-
-    return data
+    return full_data

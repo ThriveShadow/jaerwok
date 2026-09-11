@@ -119,25 +119,45 @@
     btnToStep2.disabled = true;
     uploadCount.textContent = "0 images uploaded";
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+
+    ngrdiResultWrap.classList.add("hidden");
+    ngrdiProgressWrap.classList.add("hidden");
+    ngrdiErrorWrap.classList.add("hidden");
+    if (ngrdiPollTimer) { clearInterval(ngrdiPollTimer); ngrdiPollTimer = null; }
+
+    yoloResultWrap.classList.add("hidden");
+    yoloProgressWrap.classList.add("hidden");
+    yoloErrorWrap.classList.add("hidden");
+    if (yoloPollTimer) { clearInterval(yoloPollTimer); yoloPollTimer = null; }
+
+    reportResultWrap.classList.add("hidden");
+    reportErrorWrap.classList.add("hidden");
   }
-  
+
   btnNewProject.addEventListener("click", () => {
     resetProjectState();
     uploadSection.classList.remove("hidden");
     goToStep(1);
   });
 
+  // ---- Re-sync all step states when opening/reopening a project --------
   async function openProject(pid) {
     projectId = pid;
     goToStep(2);
-  
-    // Check if there's an active job for this project before assuming it's done
+
+    await Promise.all([
+      resumeStep2(pid),
+      resumeStep3(pid),
+      resumeStep4(pid),
+    ]);
+  }
+
+  async function resumeStep2(pid) {
     try {
       const statusRes = await fetch(`/api/status/${pid}`);
       if (statusRes.ok) {
         const job = await statusRes.json();
         if (job.status === "running") {
-          // Resume polling instead of trying to load a result that doesn't exist yet
           errorWrap.classList.add("hidden");
           resultWrap.classList.add("hidden");
           progressWrap.classList.remove("hidden");
@@ -150,6 +170,7 @@
           return;
         }
         if (job.status === "error") {
+          progressWrap.classList.add("hidden");
           showError(job.error || "Reconstruction failed.");
           return;
         }
@@ -158,8 +179,71 @@
     } catch (e) {
       // no job record at all (never started, or server restarted) — fall through
     }
-  
-    loadResult();
+    await loadResult();
+  }
+
+  async function resumeStep3(pid) {
+    try {
+      const statusRes = await fetch(`/api/ngrdi/status/${pid}`);
+      if (statusRes.ok) {
+        const job = await statusRes.json();
+        if (job.status === "running") {
+          ngrdiErrorWrap.classList.add("hidden");
+          ngrdiResultWrap.classList.add("hidden");
+          ngrdiProgressWrap.classList.remove("hidden");
+          ngrdiProgressFill.style.width = `${job.progress || 0}%`;
+          ngrdiProgressLabel.textContent = job.log.length ? job.log[job.log.length - 1] : "Working...";
+          ngrdiJobLog.textContent = job.log.join("\n");
+          btnStartNgrdi.disabled = true;
+          if (ngrdiPollTimer) clearInterval(ngrdiPollTimer);
+          ngrdiPollTimer = setInterval(pollNgrdiStatus, 2000);
+          return;
+        }
+        if (job.status === "error") {
+          ngrdiProgressWrap.classList.add("hidden");
+          showNgrdiError(job.error || "NGRDI analysis failed.");
+          return;
+        }
+        if (job.status === "done") {
+          await loadNgrdiResult();
+          return;
+        }
+      }
+    } catch (e) {
+      // no job record — leave step 3 at its default empty state
+    }
+  }
+
+  async function resumeStep4(pid) {
+    try {
+      const statusRes = await fetch(`/api/yolo/status/${pid}`);
+      if (statusRes.ok) {
+        const job = await statusRes.json();
+        if (job.status === "running") {
+          yoloErrorWrap.classList.add("hidden");
+          yoloResultWrap.classList.add("hidden");
+          yoloProgressWrap.classList.remove("hidden");
+          yoloProgressFill.style.width = `${job.progress || 0}%`;
+          yoloProgressLabel.textContent = job.log.length ? job.log[job.log.length - 1] : "Working...";
+          yoloJobLog.textContent = job.log.join("\n");
+          btnStartYolo.disabled = true;
+          if (yoloPollTimer) clearInterval(yoloPollTimer);
+          yoloPollTimer = setInterval(pollYoloStatus, 2000);
+          return;
+        }
+        if (job.status === "error") {
+          yoloProgressWrap.classList.add("hidden");
+          showYoloError(job.error || "Detection failed.");
+          return;
+        }
+        if (job.status === "done") {
+          await loadYoloResult();
+          return;
+        }
+      }
+    } catch (e) {
+      // no job record — leave step 4 at its default empty state
+    }
   }
 
   // ---- Step navigation ----------------------------------------------
@@ -205,8 +289,6 @@
   const uploadProgressFill = document.getElementById("upload-progress-fill");
   const uploadProgressLabel = document.getElementById("upload-progress-label");
 
-  const UPLOAD_CONCURRENCY = 4;
-
   let currentUploadFiles = [];
   let totalBytes = 0;
 
@@ -222,21 +304,20 @@
     return new Promise((resolve, reject) => {
       const form = new FormData();
       if (pid) form.append("project_id", pid);
-      // Keep "images" key so your backend doesn't need to change
       form.append("images", file);
 
       const xhr = new XMLHttpRequest();
       xhr.open("POST", "/api/upload");
-      
+
       xhr.upload.addEventListener("progress", (e) => {
         if (e.lengthComputable) {
           file._loaded = e.loaded;
           updateProgress();
         }
       });
-      
+
       xhr.onload = () => {
-        file._loaded = file.size; // Force 100% for this file on success
+        file._loaded = file.size;
         updateProgress();
         try {
           const data = JSON.parse(xhr.responseText);
@@ -246,7 +327,7 @@
           reject(new Error(`bad response (HTTP ${xhr.status})`));
         }
       };
-      
+
       xhr.onerror = () => reject(new Error("Network error mid-upload"));
       xhr.send(form);
     });
@@ -287,8 +368,7 @@
     btnUpload.disabled = true;
     btnUpload.textContent = "Uploading...";
     uploadProgressWrap.classList.remove("hidden");
-    
-    // Copy pending files and initialize tracking
+
     currentUploadFiles = pendingFiles.slice();
     currentUploadFiles.forEach(f => f._loaded = 0);
     totalBytes = currentUploadFiles.reduce((s, f) => s + f.size, 0);
@@ -298,13 +378,11 @@
       let totalSaved = 0;
       let skipped = [];
 
-      // 1. Upload the very first file strictly alone to establish the project_id
       const first = await uploadSingleFile(currentUploadFiles[0], projectId);
       projectId = first.project_id;
       totalSaved += first.saved_count || 0;
       if (first.skipped) skipped.push(...first.skipped);
 
-      // 2. Upload the rest of the files with a concurrency limit of 3
       const rest = currentUploadFiles.slice(1);
       if (rest.length > 0) {
         const results = await runWithConcurrency(rest, 3, (file) => uploadSingleFile(file, projectId));
@@ -314,17 +392,16 @@
         });
       }
 
-      // 3. Finalize UI
       const listRes = await fetch(`/api/project/${projectId}/images`);
       const listData = await listRes.json();
       uploadCount.textContent = `${listData.count} images uploaded`;
       btnToStep2.disabled = listData.count < 3;
-      
+
       pendingFiles = [];
       renderFileList();
       uploadProgressLabel.textContent = `Done — ${totalSaved} files uploaded`;
       if (skipped.length) alert(`Skipped unsupported files: ${skipped.join(", ")}`);
-      
+
     } catch (err) {
       alert(`Upload failed: ${err.message}`);
     } finally {
@@ -339,17 +416,16 @@
   if (btnRegen) {
     btnRegen.addEventListener("click", async () => {
       if (!projectId) return;
-      btnRegen.textContent = "Regenerating...";
+      btnRegen.textContent = "Refreshing...";
       btnRegen.disabled = true;
       try {
         const res = await fetch(`/api/report/regenerate/${projectId}`, { method: "POST" });
-        if (!res.ok) throw new Error("Failed to regenerate report");
+        if (!res.ok) throw new Error("Failed to refresh summary");
         await loadResult();
-        alert("Report successfully regenerated!");
       } catch (err) {
         alert(`Error: ${err.message}`);
       } finally {
-        btnRegen.textContent = "Regenerate Report";
+        btnRegen.textContent = "Refresh Summary";
         btnRegen.disabled = false;
       }
     });
@@ -416,7 +492,6 @@
     resultWrap.classList.remove("hidden");
     const img = document.getElementById("ortho-preview");
     const dl = document.getElementById("ortho-download");
-    const pdfDl = document.getElementById("pdf-download");
 
     if (data.preview_available) {
       img.src = data.preview_url + `?t=${Date.now()}`;
@@ -425,15 +500,6 @@
       img.classList.add("hidden");
     }
     dl.href = data.orthophoto_download_url;
-
-    if (pdfDl) {
-      if (data.pdf_download_url) {
-        pdfDl.href = data.pdf_download_url;
-        pdfDl.classList.remove("hidden");
-      } else {
-        pdfDl.classList.add("hidden");
-      }
-    }
 
     const rows = [
       ["Input images", data.input_images],
@@ -525,6 +591,7 @@
     const data = await res.json();
     if (!res.ok) { showNgrdiError(data.error || "Could not load NGRDI result."); return; }
 
+    ngrdiProgressWrap.classList.add("hidden");
     ngrdiResultWrap.classList.remove("hidden");
     const img = document.getElementById("ngrdi-preview");
     img.src = data.preview_url + `?t=${Date.now()}`;
@@ -542,7 +609,7 @@
   const btnToStep4 = document.getElementById("btn-to-step4");
   if (btnToStep4) btnToStep4.addEventListener("click", () => goToStep(4));
 
-    // ---- Models: list / upload -------------------------------------------
+  // ---- Models: list / upload -------------------------------------------
   async function loadModels() {
     const res = await fetch("/api/models");
     const data = await res.json();
@@ -647,6 +714,7 @@
     const data = await res.json();
     if (!res.ok) { showYoloError(data.error || "Could not load detection result."); return; }
 
+    yoloProgressWrap.classList.add("hidden");
     yoloResultWrap.classList.remove("hidden");
     const img = document.getElementById("yolo-preview");
     img.src = data.annotated_url + `?t=${Date.now()}`;
@@ -654,6 +722,7 @@
 
     const rows = [
       ["Model", data.model_file],
+      ["Tiles processed", data.total_tiles ?? "-"],
       ["Total detections", data.total_detections],
       ["Confidence threshold", data.conf],
       ["IOU threshold", data.iou],
@@ -671,5 +740,82 @@
     yoloErrorWrap.classList.remove("hidden");
   }
 
+  const btnToStep5 = document.getElementById("btn-to-step5");
+  if (btnToStep5) btnToStep5.addEventListener("click", () => goToStep(5));
+
   loadModels();
+
+  // ---- Step 5: full PDF report ------------------------------------------
+  const btnGenerateReport = document.getElementById("btn-generate-report");
+  const reportProgressLabel = document.getElementById("report-progress-label");
+  const reportResultWrap = document.getElementById("report-result-wrap");
+  const reportErrorWrap = document.getElementById("report-error-wrap");
+
+  if (btnGenerateReport) {
+    btnGenerateReport.addEventListener("click", async () => {
+      if (!projectId) { alert("Run reconstruction first."); return; }
+      reportErrorWrap.classList.add("hidden");
+      reportResultWrap.classList.add("hidden");
+      reportProgressLabel.classList.remove("hidden");
+      btnGenerateReport.disabled = true;
+
+      try {
+        const res = await fetch(`/api/report/generate/${projectId}`, { method: "POST" });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "failed to generate report");
+        await loadFullReport();
+      } catch (err) {
+        showReportError(err.message);
+      } finally {
+        reportProgressLabel.classList.add("hidden");
+        btnGenerateReport.disabled = false;
+      }
+    });
+  }
+
+  async function loadFullReport() {
+    const res = await fetch(`/api/report/full/${projectId}`);
+    const data = await res.json();
+    if (!res.ok) { showReportError(data.error || "Could not load report."); return; }
+
+    reportResultWrap.classList.remove("hidden");
+    document.getElementById("report-pdf-download").href = data.pdf_download_url;
+
+    const odm = data.odm || {};
+    const ngrdi = data.ngrdi;
+    const yolo = data.yolo;
+
+    const rows = [
+      ["Input images", data.input_images],
+      ["Images used in reconstruction", odm.images_used ?? "-"],
+      ["Reconstructed points", odm.points ?? "-"],
+      ["Average GSD (cm/px)", odm.gsd_cm ?? "-"],
+      ["Area covered (sq m)", odm.area_sqm ?? "-"],
+      ["Reconstruction time (s)", odm.processing_time_s ?? "-"],
+    ];
+
+    if (ngrdi) {
+      rows.push(["NGRDI processing time (s)", ngrdi.processing_time_s ?? "-"]);
+      rows.push(["NGRDI vmin / vmax", `${ngrdi.vmin ?? "-"} / ${ngrdi.vmax ?? "-"}`]);
+    } else {
+      rows.push(["NGRDI", "not run yet"]);
+    }
+
+    if (yolo) {
+      rows.push(["YOLOv8 model", yolo.model_file ?? "-"]);
+      rows.push(["YOLOv8 tiles processed", yolo.total_tiles ?? "-"]);
+      rows.push(["YOLOv8 total detections", yolo.total_detections ?? "-"]);
+      rows.push(["YOLOv8 processing time (s)", yolo.processing_time_s ?? "-"]);
+    } else {
+      rows.push(["YOLOv8 detection", "not run yet"]);
+    }
+
+    const table = document.getElementById("report-stats-table");
+    table.innerHTML = rows.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join("");
+  }
+
+  function showReportError(msg) {
+    reportErrorWrap.textContent = msg;
+    reportErrorWrap.classList.remove("hidden");
+  }
 })();

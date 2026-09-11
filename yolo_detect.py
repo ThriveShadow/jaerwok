@@ -166,6 +166,7 @@ class YoloDetector:
             "iou": self.iou,
             "tile_size": self.tile_size,
             "overlap": self.overlap,
+            "total_tiles": total_tiles,
             "total_detections": len(final_detections),
             "counts_by_class": counts_by_class,
             "orthophoto_width": width,

@@ -2,11 +2,13 @@
 Tea Plantation Mapping Web App
 Step 1: Upload images
 Step 2: Reconstruct orthomosaic (OpenSfM + OpenMVS + orthophoto, via ODM/OpenDroneMap)
-Step 3: YOLOv8 detection (stub, not implemented yet)
+Step 3: NGRDI vegetation index
+Step 4: YOLOv8 detection
+Step 5: Full PDF report
 
 Run with:
     python app.py
-Then open http://<vm-ip>:5000
+Then open http://<vm-ip>:5050
 """
 import json
 import os
@@ -27,7 +29,7 @@ from flask import Flask, jsonify, render_template, request, send_from_directory,
 from werkzeug.utils import secure_filename
 
 from pipeline import ODMPipeline, PipelineError
-from report_gen import build_report
+from report_gen import build_summary, build_pdf_report
 
 from ngrdi import NGRDIProcessor, NGRDIError
 from yolo_detect import YoloDetector, YoloDetectError
@@ -157,6 +159,10 @@ def delete_project(project_id):
         ngrdi_job = NGRDI_JOBS.get(project_id)
         if ngrdi_job and ngrdi_job.get("status") == "running":
             return jsonify({"error": "cannot delete while NGRDI analysis is running"}), 409
+    with YOLO_JOBS_LOCK:
+        yolo_job = YOLO_JOBS.get(project_id)
+        if yolo_job and yolo_job.get("status") == "running":
+            return jsonify({"error": "cannot delete while YOLOv8 detection is running"}), 409
 
     try:
         shutil.rmtree(pdir)
@@ -167,6 +173,8 @@ def delete_project(project_id):
         JOBS.pop(project_id, None)
     with NGRDI_JOBS_LOCK:
         NGRDI_JOBS.pop(project_id, None)
+    with YOLO_JOBS_LOCK:
+        YOLO_JOBS.pop(project_id, None)
 
     return jsonify({"deleted": project_id})
 
@@ -230,7 +238,7 @@ def process(project_id):
                     JOBS[project_id]["progress"] = progress
                     ts = datetime.now().strftime("%H:%M:%S")
                     JOBS[project_id]["log"].append(f"[{ts}] {message}")
-            build_report(project_dir(project_id))
+            build_summary(project_dir(project_id))
             with JOBS_LOCK:
                 JOBS[project_id]["status"] = "done"
                 JOBS[project_id]["progress"] = 100
@@ -258,7 +266,7 @@ def status(project_id):
 
 
 # ---------------------------------------------------------------------------
-# Step 2 results: orthomosaic + report
+# Step 2 results: orthomosaic + summary stats
 # ---------------------------------------------------------------------------
 @app.route("/api/result/<project_id>", methods=["GET"])
 def result(project_id):
@@ -270,7 +278,6 @@ def result(project_id):
         data = json.load(f)
     data["preview_url"] = url_for("serve_artifact", project_id=project_id, filename="report/orthomosaic_preview.png")
     data["orthophoto_download_url"] = url_for("serve_artifact", project_id=project_id, filename="odm_orthophoto/odm_orthophoto.tif")
-    data["pdf_download_url"] = url_for("serve_artifact", project_id=project_id, filename="report/report.pdf")
     return jsonify(data)
 
 
@@ -295,11 +302,14 @@ def list_projects_metadata():
 
 @app.route("/api/report/regenerate/<project_id>", methods=["POST"])
 def regenerate_report(project_id):
+    """Rebuilds just the step-2 summary (orthomosaic preview + report.json) -
+    not the PDF. Useful if raw ODM output exists on disk but the summary
+    step didn't run (e.g. after manually recovering files from a pod)."""
     pdir = project_dir(project_id)
     if not pdir.exists():
         return jsonify({"error": "unknown project"}), 404
     try:
-        data = build_report(pdir)
+        data = build_summary(pdir)
         return jsonify({"success": True, "data": data})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -332,7 +342,6 @@ def ngrdi_process(project_id):
                     NGRDI_JOBS[project_id]["progress"] = progress
                     ts = datetime.now().strftime("%H:%M:%S")
                     NGRDI_JOBS[project_id]["log"].append(f"[{ts}] {message}")
-            build_report(project_dir(project_id))  # regenerate PDF to include NGRDI section
             with NGRDI_JOBS_LOCK:
                 NGRDI_JOBS[project_id]["status"] = "done"
                 NGRDI_JOBS[project_id]["progress"] = 100
@@ -479,6 +488,36 @@ def yolo_result(project_id):
         data = json.load(f)
     data["annotated_url"] = url_for("serve_artifact", project_id=project_id, filename=f"yolo/{data['annotated_image']}")
     data["detections_download_url"] = url_for("serve_artifact", project_id=project_id, filename="yolo/detections.json")
+    return jsonify(data)
+
+
+# ---------------------------------------------------------------------------
+# Step 5: full PDF report (ODM + NGRDI + YOLO, whichever exist so far)
+# ---------------------------------------------------------------------------
+@app.route("/api/report/generate/<project_id>", methods=["POST"])
+def generate_pdf_report(project_id):
+    pdir = project_dir(project_id)
+    if not pdir.exists():
+        return jsonify({"error": "unknown project"}), 404
+    ortho = pdir / "odm_orthophoto" / "odm_orthophoto.tif"
+    if not ortho.exists():
+        return jsonify({"error": "run orthomosaic reconstruction first"}), 400
+    try:
+        data = build_pdf_report(pdir)
+        return jsonify({"success": True, "data": data})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/report/full/<project_id>", methods=["GET"])
+def full_report(project_id):
+    pdir = project_dir(project_id)
+    full_path = pdir / "report" / "full_report.json"
+    if not full_path.exists():
+        return jsonify({"error": "report not generated yet"}), 404
+    with open(full_path) as f:
+        data = json.load(f)
+    data["pdf_download_url"] = url_for("serve_artifact", project_id=project_id, filename="report/report.pdf")
     return jsonify(data)
 
 

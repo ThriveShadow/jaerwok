@@ -35,15 +35,18 @@
     </div>
     <div class="step" data-step="4">
       <span class="step-num">4</span>
-      <span class="step-label">YOLOv8 Detection (coming next)</span>
+      <span class="step-label">YOLOv8 Detection</span>
+    </div>
+    <div class="step" data-step="5">
+      <span class="step-num">5</span>
+      <span class="step-label">Full Report</span>
     </div>
   </nav>
 
   <main>
     <!-- STEP 1 -->
-    <!-- STEP 1 -->
 <section id="panel-1" class="panel active">
-  
+
   <div class="panel-actions" style="margin-bottom: 16px;">
     <button id="btn-new-project">+ New Project</button>
   </div>
@@ -127,8 +130,7 @@
           <div class="preview-card">
             <img id="ortho-preview" alt="Orthomosaic preview">
             <a id="ortho-download" href="#" download>Download full orthomosaic (GeoTIFF)</a>
-            <a id="pdf-download" href="#" download style="display:block; margin-top:8px;">Download PDF Report</a>
-            <button id="btn-regen-report" class="secondary" style="margin-top: 12px; width: 100%;">Regenerate Report</button>
+            <button id="btn-regen-report" class="secondary" style="margin-top: 12px; width: 100%;">Refresh Summary</button>
           </div>
           <div class="stats-card">
             <table id="stats-table"></table>
@@ -237,9 +239,41 @@
         <div class="stats-card" style="margin-top: 16px;">
           <table id="yolo-stats-table"></table>
         </div>
+        <div class="panel-actions">
+          <button id="btn-to-step5" class="secondary">Continue to full report &rarr;</button>
+        </div>
       </div>
 
       <div id="yolo-error-wrap" class="error-wrap hidden"></div>
+    </section>
+
+    <!-- STEP 5 -->
+    <section id="panel-5" class="panel">
+      <h2>5. Full report (PDF)</h2>
+      <p class="hint">Generates a single PDF combining the orthomosaic, reconstruction stats, and
+        system resource usage graph, plus &mdash; if you've run them &mdash; the NGRDI vegetation
+        index and YOLOv8 detection sections. Safe to (re)generate at any point after Step 2; it just
+        includes whichever later steps have been run so far.</p>
+
+      <div class="panel-actions">
+        <button id="btn-generate-report">Generate / refresh report</button>
+      </div>
+
+      <div id="report-progress-label" class="progress-label hidden">Generating&hellip;</div>
+
+      <div id="report-result-wrap" class="result-wrap hidden">
+        <h3>Report</h3>
+        <div class="stats-card">
+          <table id="report-stats-table"></table>
+        </div>
+        <div class="panel-actions">
+          <a id="report-pdf-download" href="#" download>
+            <button type="button">Download PDF report</button>
+          </a>
+        </div>
+      </div>
+
+      <div id="report-error-wrap" class="error-wrap hidden"></div>
     </section>
   </main>
 
