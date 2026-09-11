@@ -16,6 +16,13 @@ import shutil
 import threading
 import time
 import uuid
+import io
+import zipfile
+import psutil
+import rasterio
+import numpy as np
+from PIL import Image
+from flask import send_file
 
 from functools import wraps
 from flask import session
@@ -519,6 +526,63 @@ def full_report(project_id):
         data = json.load(f)
     data["pdf_download_url"] = url_for("serve_artifact", project_id=project_id, filename="report/report.pdf")
     return jsonify(data)
+
+# ---------------------------------------------------------------------------
+# System Usage Stats
+# ---------------------------------------------------------------------------
+@app.route("/api/system_usage")
+def system_usage():
+    return jsonify({
+        "cpu": psutil.cpu_percent(interval=None),
+        "ram": psutil.virtual_memory().percent,
+        "disk": psutil.disk_usage('/').percent
+    })
+
+# ---------------------------------------------------------------------------
+# Training Tile Downloader (Step 2)
+# ---------------------------------------------------------------------------
+@app.route("/api/project/<project_id>/tiles", methods=["GET"])
+def download_tiles(project_id):
+    size = int(request.args.get("size", 512))
+    pdir = project_dir(project_id)
+    ortho_path = pdir / "odm_orthophoto" / "odm_orthophoto.tif"
+
+    if not ortho_path.exists():
+        return jsonify({"error": "Orthophoto not found"}), 404
+
+    memory_file = io.BytesIO()
+    with zipfile.ZipFile(memory_file, 'w') as zf:
+        with rasterio.open(ortho_path) as src:
+            for col_off in range(0, src.width, size):
+                for row_off in range(0, src.height, size):
+                    window = rasterio.windows.Window(col_off, row_off, size, size)
+                    data = src.read((1, 2, 3), window=window)
+                    _, h, w = data.shape
+                    
+                    if h == 0 or w == 0:
+                        continue
+                        
+                    # Skip fully transparent tiles if alpha channel exists
+                    if src.count >= 4:
+                        alpha = src.read(4, window=window)
+                        if not np.any(alpha):
+                            continue
+
+                    # Convert from (bands, rows, cols) to (rows, cols, bands)
+                    img_array = np.transpose(data, (1, 2, 0))
+                    img = Image.fromarray(img_array)
+
+                    # Save tile as JPEG in memory, then add to zip
+                    img_bytes = io.BytesIO()
+                    img.save(img_bytes, format="JPEG")
+                    zf.writestr(f"tile_{size}x{size}_{col_off}_{row_off}.jpg", img_bytes.getvalue())
+
+    memory_file.seek(0)
+    return send_file(
+        memory_file, 
+        download_name=f"{project_id}_tiles_{size}.zip", 
+        as_attachment=True
+    )
 
 
 if __name__ == "__main__":

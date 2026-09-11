@@ -818,4 +818,60 @@
     reportErrorWrap.textContent = msg;
     reportErrorWrap.classList.remove("hidden");
   }
+
+  // ---- Tile download logic (Step 2) -------------------------------------
+  const btnDownloadTiles = document.getElementById("btn-download-tiles");
+  const tileSizeSelect = document.getElementById("tile-size");
+  if (btnDownloadTiles) {
+    btnDownloadTiles.addEventListener("click", () => {
+      if (!projectId) return;
+      const size = tileSizeSelect.value;
+      // Triggers browser download without needing XHR logic
+      window.location.href = `/api/project/${projectId}/tiles?size=${size}`;
+    });
+  }
+
+  // ---- System stats polling --------------------------------------------
+  const sysCpuBar = document.getElementById("sys-cpu-bar");
+  const sysRamBar = document.getElementById("sys-ram-bar");
+  const sysDiskBar = document.getElementById("sys-disk-bar");
+
+  const sysCpuVal = document.getElementById("sys-cpu-val");
+  const sysRamVal = document.getElementById("sys-ram-val");
+  const sysDiskVal = document.getElementById("sys-disk-val");
+
+  function setSysBar(bar, valElem, val) {
+    if (!bar) return;
+    const percent = Math.round(val);
+    
+    bar.style.width = `${percent}%`;
+    if (valElem) valElem.textContent = `${percent}%`;
+    
+    bar.className = "sys-bar-fill"; // Reset existing color classes
+    
+    // Apply green-yellow-orange-red scale
+    if (val < 60) bar.classList.add("bg-green");
+    else if (val < 80) bar.classList.add("bg-yellow");
+    else if (val < 90) bar.classList.add("bg-orange");
+    else bar.classList.add("bg-red");
+  }
+
+  async function fetchSystemStats() {
+    try {
+      const res = await fetch("/api/system_usage");
+      if (res.ok) {
+        const data = await res.json();
+        setSysBar(sysCpuBar, sysCpuVal, data.cpu);
+        setSysBar(sysRamBar, sysRamVal, data.ram);
+        setSysBar(sysDiskBar, sysDiskVal, data.disk);
+      }
+    } catch (err) {
+      // Quiet fail if the server disconnects temporarily
+    }
+  }
+  
+  // Init instantly, then poll every 5 seconds
+  fetchSystemStats();
+  setInterval(fetchSystemStats, 5000);
+
 })();

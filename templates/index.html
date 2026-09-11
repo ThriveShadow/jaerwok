@@ -16,7 +16,26 @@
           AND ANOMALY DETECTION SYSTEM USING UAV (UNMANNED AERIAL VEHICLE) WITH INTEGRATED IMAGE STITCHING
           AND MACHINE LEARNING</p>
       </div>
-      <a href="{{ url_for('logout') }}" style="margin-left: auto; font-size: 0.8rem; color: var(--gray);">Log out</a>
+      <div style="margin-left: auto; display: flex; align-items: center; gap: 24px;">
+        <div id="sys-stats" class="sys-stats">
+          <div class="sys-stat" title="CPU Usage">
+            <span class="sys-label">CPU</span>
+            <div class="sys-bar-wrap"><div id="sys-cpu-bar" class="sys-bar-fill"></div></div>
+            <span id="sys-cpu-val" class="sys-val">0%</span>
+          </div>
+          <div class="sys-stat" title="RAM Usage">
+            <span class="sys-label">RAM</span>
+            <div class="sys-bar-wrap"><div id="sys-ram-bar" class="sys-bar-fill"></div></div>
+            <span id="sys-ram-val" class="sys-val">0%</span>
+          </div>
+          <div class="sys-stat" title="Disk Usage">
+            <span class="sys-label">DISK</span>
+            <div class="sys-bar-wrap"><div id="sys-disk-bar" class="sys-bar-fill"></div></div>
+            <span id="sys-disk-val" class="sys-val">0%</span>
+          </div>
+        </div>
+        <a href="{{ url_for('logout') }}" style="font-size: 0.8rem; color: var(--gray);">Log out</a>
+      </div>
     </div>
   </header>
 
@@ -130,6 +149,19 @@
           <div class="preview-card">
             <img id="ortho-preview" alt="Orthomosaic preview">
             <a id="ortho-download" href="#" download>Download full orthomosaic (GeoTIFF)</a>
+            
+            <div style="margin-top: 16px; border-top: 1px solid var(--border); padding-top: 16px;">
+              <label style="font-size: 0.85rem; color: var(--gray); display: block; margin-bottom: 6px;">Download tiles for training(JPEG)</label>
+              <div style="display: flex; gap: 8px;">
+                <select id="tile-size" style="padding: 6px; border-radius: 4px; border: 1px solid var(--border);">
+                  <option value="256">256x256</option>
+                  <option value="512" selected>512x512</option>
+                  <option value="1024">1024x1024</option>
+                </select>
+                <button id="btn-download-tiles" class="secondary" style="flex: 1;">Download ZIP</button>
+              </div>
+            </div>
+
             <button id="btn-regen-report" class="secondary" style="margin-top: 12px; width: 100%;">Refresh Summary</button>
           </div>
           <div class="stats-card">
