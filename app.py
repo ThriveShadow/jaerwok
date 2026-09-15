@@ -233,6 +233,13 @@ def process(project_id):
                 quality=quality,
                 max_concurrency=max_concurrency,
             )
+        elif compute == "remote":
+            from remote_pipeline import RemoteODMPipeline
+            pipeline = RemoteODMPipeline(
+                project_dir=project_dir(project_id),
+                quality=quality,
+                max_concurrency=max_concurrency,
+            )
         else:
             pipeline = ODMPipeline(
                 project_dir=project_dir(project_id),
