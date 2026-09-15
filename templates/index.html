@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Jaerwok Plantation Mapping</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/leaflet.css') }}">
+  <script src="{{ url_for('static', filename='js/leaflet.js') }}"></script>
 </head>
 <body>
   <header class="app-header">
@@ -282,19 +284,17 @@
 
     <!-- STEP 5 -->
     <section id="panel-5" class="panel">
-      <h2>5. Full report (PDF)</h2>
+      <h2>5. Full report</h2>
       <p class="hint">Generates a single PDF combining the orthomosaic, reconstruction stats, and
         system resource usage graph, plus &mdash; if you've run them &mdash; the NGRDI vegetation
         index and YOLOv8 detection sections. Safe to (re)generate at any point after Step 2; it just
         includes whichever later steps have been run so far.</p>
 
-      <div class="panel-actions">
-        <button id="btn-generate-report">Generate / refresh report</button>
-      </div>
-
       <div id="report-progress-label" class="progress-label hidden">Generating&hellip;</div>
 
       <div id="report-result-wrap" class="result-wrap hidden">
+        
+        <div id="report-map" style="height: 400px; width: 100%; margin-bottom: 20px; border-radius: 8px; z-index: 1;"></div>
         <h3>Report</h3>
         <div class="stats-card">
           <table id="report-stats-table"></table>

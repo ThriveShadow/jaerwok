@@ -149,7 +149,7 @@ class YoloDetector:
         yield 80, f"{len(final_detections)} detections after de-duplication"
 
         yield 82, "Rendering annotated preview (downsampled for large orthophotos)..."
-        annotated_path = out_dir / "yolo_detections.jpg"
+        annotated_path = out_dir / "yolo_detections.png"
         out_w, out_h = self._render_annotated(
             ortho_path, final_detections, class_names, annotated_path, width, height,
         )
@@ -236,7 +236,12 @@ class YoloDetector:
         if arr.dtype != np.uint8:
             arr = np.clip(arr, 0, 255).astype(np.uint8)
 
-        img = Image.fromarray(arr, mode="RGB")
+        r, g, b = arr[:,:,0], arr[:,:,1], arr[:,:,2]
+        black_pixels = (r == 0) & (g == 0) & (b == 0)
+        alpha = np.where(black_pixels, 0, 255).astype(np.uint8)
+        rgba_arr = np.dstack((arr, alpha))
+
+        img = Image.fromarray(rgba_arr, mode="RGBA")
         draw = ImageDraw.Draw(img)
 
         try:
@@ -260,5 +265,5 @@ class YoloDetector:
             draw.rectangle([sx1, max(0, sy1 - th - 6), sx1 + tw + 6, sy1], fill=color)
             draw.text((sx1 + 3, max(0, sy1 - th - 5)), label, fill=(0, 0, 0), font=font)
 
-        img.save(out_path, "JPEG", quality=90)
+        img.save(out_path, "PNG")
         return out_w, out_h

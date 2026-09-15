@@ -246,6 +246,25 @@
     }
   }
 
+  async function autoFetchReport() {
+  if (!projectId) return;
+
+  reportErrorWrap.classList.add("hidden");
+  reportResultWrap.classList.add("hidden");
+  reportProgressLabel.classList.remove("hidden");
+
+  try {
+    const res = await fetch(`/api/report/generate/${projectId}`, { method: "POST" });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Failed to generate report");
+    await loadFullReport();
+  } catch (err) {
+    showReportError(err.message);
+  } finally {
+    reportProgressLabel.classList.add("hidden");
+  }
+  }
+
   // ---- Step navigation ----------------------------------------------
   function goToStep(n) {
     document.querySelectorAll(".panel").forEach(p => p.classList.remove("active"));
@@ -253,7 +272,12 @@
     document.querySelectorAll(".step").forEach(s => {
       s.classList.toggle("active", Number(s.dataset.step) === n);
     });
+
+    if (n === 5) {
+      autoFetchReport();
+    }
   }
+
   document.querySelectorAll(".step:not(.disabled)").forEach(el => {
     el.addEventListener("click", () => goToStep(Number(el.dataset.step)));
   });
@@ -773,12 +797,78 @@
     });
   }
 
+  // ---- Leaflet Map Logic ----
+  let map = null;
+
+  async function initReportMap(projectId) {
+    const mapElem = document.getElementById("report-map");
+    if (!mapElem) return;
+
+    // Destroy previous instance if re-opening to prevent Leaflet errors
+    if (map) {
+      map.remove();
+      map = null;
+    }
+
+    try {
+      // 1. Fetch Leaflet geographic bounds from Flask backend
+      const boundsRes = await fetch(`/api/project/${projectId}/bounds`);
+      if (!boundsRes.ok) return;
+      const { bounds } = await boundsRes.json();
+
+      // 2. Initialize Leaflet map
+      map = L.map('report-map');
+      
+      const esriSat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+        attribution: 'Tiles &copy; Esri'
+      }).addTo(map);
+
+      const overlayLayers = {};
+
+      // 3. Add Base Orthophoto Preview
+      const orthoUrl = `/files/${projectId}/report/orthomosaic_preview.png`;
+      const orthoLayer = L.imageOverlay(orthoUrl, bounds).addTo(map);
+      overlayLayers["Orthomosaic"] = orthoLayer;
+
+      // 4. Add NGRDI Layer (if generated)
+      try {
+        const ngrdiRes = await fetch(`/api/ngrdi/result/${projectId}`);
+        if (ngrdiRes.ok) {
+          const ngrdiData = await ngrdiRes.json();
+          const ngrdiLayer = L.imageOverlay(ngrdiData.preview_url, bounds);
+          overlayLayers["NGRDI"] = ngrdiLayer;
+        }
+      } catch (e) {}
+
+      // 5. Add YOLO Detections Layer (if generated)
+      try {
+        const yoloRes = await fetch(`/api/yolo/result/${projectId}`);
+        if (yoloRes.ok) {
+          const yoloData = await yoloRes.json();
+          const yoloLayer = L.imageOverlay(yoloData.annotated_url, bounds);
+          overlayLayers["YOLO Detections"] = yoloLayer;
+        }
+      } catch (e) {}
+
+      // 6. Add Layer Toggle Control widget to map
+      L.control.layers({ "Satellite Base": esriSat }, overlayLayers, { collapsed: false }).addTo(map);
+
+      // Fit view automatically to bounds of orthophoto
+      map.fitBounds(bounds);
+    } catch (err) {
+      console.error("Map initialization failed:", err);
+    }
+  }
+
   async function loadFullReport() {
     const res = await fetch(`/api/report/full/${projectId}`);
     const data = await res.json();
     if (!res.ok) { showReportError(data.error || "Could not load report."); return; }
 
     reportResultWrap.classList.remove("hidden");
+
+    setTimeout(() => initReportMap(projectId), 100); // Delay to ensure map container is visible
+
     document.getElementById("report-pdf-download").href = data.pdf_download_url;
 
     const odm = data.odm || {};

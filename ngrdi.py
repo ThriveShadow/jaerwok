@@ -77,10 +77,13 @@ class NGRDIProcessor:
         yield 50, "Colorizing NGRDI with Red-Yellow-Green index"
         cmap = plt.get_cmap("RdYlGn")
         chunk = 1024
-        with rasterio.open(raw_path) as src:
+        
+        # Open both the raw NGRDI and the original orthophoto
+        with rasterio.open(raw_path) as src, rasterio.open(self.ortho_path) as ortho_src:
             width, height = src.width, src.height
             profile = src.profile.copy()
-            profile.update(dtype=rasterio.uint8, count=3, compress="lzw")
+            # Update to 4 bands for an Alpha channel
+            profile.update(dtype=rasterio.uint8, count=4, compress="lzw")
 
             xs = list(range(0, width, chunk))
             ys = list(range(0, height, chunk))
@@ -95,16 +98,27 @@ class NGRDIProcessor:
                         window = Window(x, y, w, h)
 
                         ngrdi = src.read(1, window=window)
+                        
+                        # Fetch original RGB to identify black NoData pixels
+                        r_orig = ortho_src.read(1, window=window)
+                        g_orig = ortho_src.read(2, window=window)
+                        b_orig = ortho_src.read(3, window=window)
+                        nodata_mask = (r_orig == 0) & (g_orig == 0) & (b_orig == 0)
+
                         ngrdi_norm = np.clip((ngrdi - self.vmin) / (self.vmax - self.vmin), 0, 1)
                         colored = cmap(ngrdi_norm)
 
                         r = (colored[:, :, 0] * 255).astype(np.uint8)
                         g = (colored[:, :, 1] * 255).astype(np.uint8)
                         b = (colored[:, :, 2] * 255).astype(np.uint8)
+                        
+                        # Add Alpha channel (0 for nodata, 255 for valid data)
+                        alpha = np.where(nodata_mask, 0, 255).astype(np.uint8)
 
                         dst.write(r, 1, window=window)
                         dst.write(g, 2, window=window)
                         dst.write(b, 3, window=window)
+                        dst.write(alpha, 4, window=window)
 
                         done += 1
                         pct = 50 + int(40 * done / total_chunks)
@@ -136,7 +150,7 @@ class NGRDIProcessor:
             from PIL import Image
             Image.MAX_IMAGE_PIXELS = None
             with Image.open(colored_path) as im:
-                im = im.convert("RGB")
+                im = im.convert("RGBA") # Changed to RGBA
                 im.thumbnail((max_dim, max_dim))
                 im.save(out_png)
         except Exception:

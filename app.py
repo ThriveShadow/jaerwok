@@ -294,6 +294,31 @@ def result(project_id):
     data["orthophoto_download_url"] = url_for("serve_artifact", project_id=project_id, filename="odm_orthophoto/odm_orthophoto.tif")
     return jsonify(data)
 
+@app.route("/api/project/<project_id>/bounds", methods=["GET"])
+def get_project_bounds(project_id):
+    pdir = project_dir(project_id)
+    ortho_path = pdir / "odm_orthophoto" / "odm_orthophoto.tif"
+    
+    if not ortho_path.exists():
+        return jsonify({"error": "Orthophoto not found"}), 404
+        
+    with rasterio.open(ortho_path) as src:
+        bounds = src.bounds # (left, bottom, right, top) in CRS
+        # Convert bounds to EPSG:4326 (WGS84 Lat/Lon) if orthophoto uses UTM
+        if src.crs and src.crs.to_string() != "EPSG:4326":
+            from rasterio.warp import transform_bounds
+            wgs_bounds = transform_bounds(src.crs, "EPSG:4326", *bounds)
+        else:
+            wgs_bounds = bounds
+            
+        # Leaflet expects [[south, west], [north, east]] -> [[lat_min, lon_min], [lat_max, lon_max]]
+        leaflet_bounds = [
+            [wgs_bounds[1], wgs_bounds[0]], # South-West
+            [wgs_bounds[3], wgs_bounds[2]]  # North-East
+        ]
+        
+    return jsonify({"bounds": leaflet_bounds})
+
 
 @app.route("/files/<project_id>/<path:filename>")
 def serve_artifact(project_id, filename):

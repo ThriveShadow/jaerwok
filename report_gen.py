@@ -98,21 +98,30 @@ def _make_preview_png(ortho_path: Path, out_png: Path) -> bool:
     if not ortho_path.exists():
         return False
     try:
-        subprocess.run(["gdal_translate", "-of", "PNG", "-outsize", "12%", "12%", "-b", "1", "-b", "2", "-b", "3", str(ortho_path), str(out_png)], check=True, capture_output=True)
+        # Added -a_nodata 0 to force black to transparent, removed -b flags
+        subprocess.run(["gdal_translate", "-of", "PNG", "-a_nodata", "0", "-outsize", "12%", "12%", str(ortho_path), str(out_png)], check=True, capture_output=True)
         return out_png.exists()
     except Exception:
         pass
     try:
         from PIL import Image
+        import numpy as np
         Image.MAX_IMAGE_PIXELS = None
         with Image.open(ortho_path) as im:
-            im = im.convert("RGB")
+            im = im.convert("RGBA")
+            arr = np.array(im)
+            
+            # Mask black pixels to transparent in PIL fallback
+            r, g, b = arr[:,:,0], arr[:,:,1], arr[:,:,2]
+            mask = (r == 0) & (g == 0) & (b == 0)
+            arr[mask, 3] = 0
+            
+            im = Image.fromarray(arr)
             im.thumbnail((2000, 2000))
-            im.save(out_png)
+            im.save(out_png, "PNG")
         return True
     except Exception:
         return False
-
 
 def _plot_usage(usage_file: Path, out_png: Path):
     if not usage_file.exists():
