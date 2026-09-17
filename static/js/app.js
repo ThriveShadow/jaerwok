@@ -87,6 +87,13 @@
       delBtn.textContent = "Delete";
       delBtn.addEventListener("click", async (e) => {
         e.stopPropagation();
+
+        const pwd = window.prompt("Enter admin password to delete this project:");
+        if (pwd !== "musangking") {
+          alert("Incorrect password. Deletion cancelled.");
+          return; // Stop the function here
+        }
+
         const ok = await askConfirm(`Delete project "${p.id}" and all its files? This cannot be undone.`);
         if (!ok) return;
         try {

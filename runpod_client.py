@@ -1,9 +1,9 @@
-#runpod_client.py
+# runpod_client.py
 import time
 import requests
+import shlex
 
-REST_BASE = "https://rest.runpod.io/v1"
-CATALOG_BASE = "https://api.runpod.io/v2"
+API_BASE = "https://api.runpod.io/v2"
 
 
 class RunPodError(RuntimeError):
@@ -23,21 +23,23 @@ class RunPodClient:
         """Returns a list of CPU flavor IDs ranked from cheapest to most expensive."""
         fallback_order = ["cpu3c", "cpu3g", "cpu5c", "cpu5g", "cpu3m"]
         try:
-            res = requests.get(f"{CATALOG_BASE}/catalog/cpus", headers=self.headers, timeout=15)
+            res = requests.get(f"{API_BASE}/catalog/cpus", headers=self.headers, timeout=15)
             res.raise_for_status()
             flavors = res.json()
-            
+
             if isinstance(flavors, dict):
-                flavors = flavors.get("items", flavors.get("data", []))
-                
+                flavors = flavors.get("cpus", flavors.get("items", flavors.get("data", [])))
+
             candidates = [f for f in flavors if f.get("vcpuCount", 0) >= min_vcpu]
             if not candidates:
                 candidates = flavors
-                
+
             candidates.sort(key=lambda f: f.get("pricePerHr", f.get("price", 999)))
             if candidates:
                 return [c["id"] for c in candidates]
         except Exception:
+            # Already tolerant by design - falls back to a hardcoded order
+            # on any error (network, parsing, missing keys, etc).
             pass
         return fallback_order
 
@@ -45,28 +47,48 @@ class RunPodClient:
                    vcpu_count: int, container_disk_gb: int, env: dict,
                    docker_start_cmd: list, cloud_type: str = "COMMUNITY",
                    data_center_ids=None, network_volume_id: str = None) -> dict:
+
+        # v2 replaces dockerEntrypoint and dockerStartCmd with a single `args` string.
+        # We combine the old entrypoint and start cmd into it securely.
+        args_str = shlex.join(["/bin/bash", "-c"] + docker_start_cmd)
+
         payload = {
             "name": name,
-            "imageName": image_name,
-            "cloudType": cloud_type,
-            "computeType": "CPU",
-            "cpuFlavorIds": [cpu_flavor_id],
-            "vcpuCount": vcpu_count,
-            "containerDiskInGb": container_disk_gb,
+            "image": image_name,
+            "cloud": cloud_type,
+            "cpu": {
+                "id": cpu_flavor_id,
+                "vcpuCount": vcpu_count
+            },
+            "disk": container_disk_gb,
             "ports": ["22/tcp"],
-            "supportPublicIp": True,
             "env": env,
-            "dockerEntrypoint": ["/bin/bash", "-c"],
-            "dockerStartCmd": docker_start_cmd,
+            "args": args_str,
         }
-        if data_center_ids:
-            payload["dataCenterIds"] = data_center_ids
-        if network_volume_id:
-            payload["networkVolumeId"] = network_volume_id
 
-        res = requests.post(f"{REST_BASE}/pods", headers=self.headers, json=payload, timeout=30)
+        if data_center_ids:
+            # CreatePodRequest expects dataCenterIds as an array of strings
+            payload["dataCenterIds"] = data_center_ids if isinstance(data_center_ids, list) else [data_center_ids]
+
+        if network_volume_id:
+            # Mounts network must be an array of objects
+            payload["mounts"] = {
+                "network": [
+                    {
+                        "volumeId": network_volume_id,
+                        "path": "/workspace"
+                    }
+                ]
+            }
+
+        try:
+            res = requests.post(f"{API_BASE}/pods", headers=self.headers, json=payload, timeout=30)
+        except requests.exceptions.RequestException as e:
+            raise RunPodError(f"Pod creation request failed: {e}") from e
+
         if res.status_code >= 300:
             raise RunPodError(f"Pod creation failed: {res.status_code} {res.text}")
+
         return res.json()
 
     def create_pod_with_fallback(self, name: str, image_name: str, min_vcpu: int,
@@ -74,11 +96,6 @@ class RunPodClient:
                                  cloud_type: str = "COMMUNITY", data_center_ids=None,
                                  network_volume_id: str = None,
                                  retry_attempts: int = 10, retry_delay_s: int = 30):
-        """Generator that yields human-readable status strings while attempting
-        to create a pod, retrying across flavors and across full passes.
-        Returns the created pod dict (accessible via the generator's return
-        value / StopIteration.value) on success, or raises RunPodError if
-        every attempt is exhausted."""
         last_err = None
 
         for attempt in range(1, retry_attempts + 1):
@@ -103,7 +120,7 @@ class RunPodClient:
                     return pod
                 except RunPodError as e:
                     last_err = e
-                    if "no longer any instances available" in str(e):
+                    if "no longer any instances available" in str(e).lower():
                         yield f"Flavor {flavor} is currently out of capacity. Trying next..."
                         continue
                     raise
@@ -121,13 +138,23 @@ class RunPodClient:
         )
 
     def get_pod(self, pod_id: str) -> dict:
-        res = requests.get(f"{REST_BASE}/pods/{pod_id}", headers=self.headers, timeout=15)
+        try:
+            res = requests.get(f"{API_BASE}/pods/{pod_id}", headers=self.headers, timeout=30)
+        except requests.exceptions.RequestException as e:
+            raise RunPodError(f"Get pod request failed: {e}") from e
+
         if res.status_code >= 300:
             raise RunPodError(f"Get pod failed: {res.status_code} {res.text}")
-        return res.json()
+
+        data = res.json()
+        return data.get("pod", data)
 
     def terminate_pod(self, pod_id: str):
-        res = requests.delete(f"{REST_BASE}/pods/{pod_id}", headers=self.headers, timeout=30)
+        try:
+            res = requests.delete(f"{API_BASE}/pods/{pod_id}", headers=self.headers, timeout=30)
+        except requests.exceptions.RequestException as e:
+            raise RunPodError(f"Terminate pod request failed: {e}") from e
+
         if res.status_code >= 300 and res.status_code != 404:
             raise RunPodError(f"Terminate pod failed: {res.status_code} {res.text}")
 
@@ -135,26 +162,39 @@ class RunPodClient:
         payload = {
             "name": name,
             "size": size_gb,
-            "dataCenterId": data_center_id,
+            "dataCenter": data_center_id,
         }
-        res = requests.post(f"{REST_BASE}/networkvolumes", headers=self.headers, json=payload, timeout=30)
+        try:
+            res = requests.post(f"{API_BASE}/network-volumes", headers=self.headers, json=payload, timeout=30)
+        except requests.exceptions.RequestException as e:
+            raise RunPodError(f"Network volume creation request failed: {e}") from e
+
         if res.status_code >= 300:
             raise RunPodError(f"Network volume creation failed: {res.status_code} {res.text}")
         return res.json()
 
     def delete_network_volume(self, volume_id: str):
-        res = requests.delete(f"{REST_BASE}/networkvolumes/{volume_id}", headers=self.headers, timeout=30)
+        try:
+            res = requests.delete(f"{API_BASE}/network-volumes/{volume_id}", headers=self.headers, timeout=30)
+        except requests.exceptions.RequestException as e:
+            raise RunPodError(f"Delete network volume request failed: {e}") from e
+
         if res.status_code >= 300 and res.status_code != 404:
             raise RunPodError(f"Delete network volume failed: {res.status_code} {res.text}")
-            
+
     def wait_for_ssh(self, pod_id: str, timeout_s: int = 300, poll_s: int = 5):
         start = time.time()
         while time.time() - start < timeout_s:
-            pod = self.get_pod(pod_id)
-            ip = pod.get("publicIp") or pod.get("ip")
-            port_mappings = pod.get("portMappings") or {}
-            ssh_port = port_mappings.get("22")
-            if ip and ssh_port:
-                return ip, ssh_port
+            try:
+                pod = self.get_pod(pod_id)
+            except RunPodError as e:
+                print(f"[runpod_client] transient error polling pod {pod_id}, will retry: {e}")
+                time.sleep(poll_s)
+                continue
+
+            runtime = pod.get("runtime") or {}
+            for p in runtime.get("ports", []):
+                if p.get("private") == 22 and p.get("public") and p.get("ip"):
+                    return p["ip"], p["public"]
             time.sleep(poll_s)
         raise RunPodError("Timed out waiting for pod's SSH connection to become available")

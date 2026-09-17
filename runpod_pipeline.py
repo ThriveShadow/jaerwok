@@ -15,6 +15,7 @@ from boto3.s3.transfer import TransferConfig
 
 import subprocess
 import paramiko
+import requests
 
 import config
 from pipeline import STAGE_MARKERS, PipelineError
@@ -82,7 +83,7 @@ class RunPodODMPipeline:
                 max_pool_connections=32,  # >= your ThreadPoolExecutor max_workers
             ),
         )
-    
+
     def _pick_spec(self, n_images: int):
         vcpu = QUALITY_VCPU.get(self.quality, 8)
         disk_gb = 10
@@ -110,7 +111,7 @@ class RunPodODMPipeline:
             # Setup the auto-kill timer
             '( sleep "$MAX_RUNTIME_S"; '
             'curl -s -X DELETE -H "Authorization: Bearer $RUNPOD_API_KEY" '
-            '"https://rest.runpod.io/v1/pods/$RUNPOD_POD_ID" ) & '
+            '"https://api.runpod.io/v2/pods/$RUNPOD_POD_ID" ) & '
             # Keep container alive
             "tail -f /dev/null"
         )
@@ -179,7 +180,7 @@ class RunPodODMPipeline:
 
             yield 99, "Orthomosaic generated on RunPod"
 
-        except RunPodError as e:
+        except (RunPodError, requests.exceptions.RequestException) as e:
             raise RunPodPipelineError(str(e)) from e
         finally:
             ssh_to_close = self.ssh
@@ -225,7 +226,7 @@ class RunPodODMPipeline:
                 print(f"[runpod_pipeline] SSH connect attempt {i+1}/{attempts} failed: {e}")
                 time.sleep(delay)
         raise RunPodPipelineError(f"Could not SSH into pod after {attempts} attempts: {last_err}")
-    
+
     def _upload_images_to_volume(self) -> Iterator[Tuple[int, str]]:
         s3 = self._s3_client()
         prefix = f"{self.project_dir.name}/images/"
@@ -302,23 +303,23 @@ class RunPodODMPipeline:
                     if channel.exit_status_ready():
                         break
                     continue
-                
+
                 last_output_time = time.time()
                 buf += chunk.decode(errors="replace")
-                
+
                 # CRITICAL: Splitting on both \n and \r for real-time progress
                 while "\n" in buf or "\r" in buf:
                     n_idx = buf.find("\n")
                     r_idx = buf.find("\r")
-                    
+
                     if n_idx != -1 and r_idx != -1:
                         split_idx = min(n_idx, r_idx)
                     else:
                         split_idx = max(n_idx, r_idx)
-                        
+
                     raw_line = buf[:split_idx]
-                    buf = buf[split_idx + 1:] 
-                    
+                    buf = buf[split_idx + 1:]
+
                     line = raw_line.strip()
                     if not line:
                         continue

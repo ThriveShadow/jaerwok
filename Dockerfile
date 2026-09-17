@@ -20,3 +20,11 @@ RUN apt-get -o Acquire::http::No-Cache=True \
 RUN mkdir -p /root/.ssh /run/sshd && \
     chmod 700 /root/.ssh && \
     ssh-keygen -A
+
+# opendronemap/odm's base image sets ENTRYPOINT to its run.py wrapper, which
+# expects CLI-style ODM args. RunPod v2's pod "args" field has no way to
+# override ENTRYPOINT (unlike v1's dockerEntrypoint) - it just appends
+# tokens to whatever ENTRYPOINT already is. Clearing it here means our
+# "/bin/bash -c <boot script>" args become the whole command instead of
+# being fed to run.py as bogus CLI flags.
+ENTRYPOINT []
